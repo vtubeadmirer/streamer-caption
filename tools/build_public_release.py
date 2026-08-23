@@ -37,6 +37,7 @@ EXCLUDED_FILES = {
     "data/transcripts.sqlite3",
     "state.json",
     "updater.json",
+    "update-check-cache.json",
     "snapshot.json",
     "SHA256SUMS.txt",
     "release-manifest.json",

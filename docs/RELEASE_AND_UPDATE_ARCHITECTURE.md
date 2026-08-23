@@ -59,6 +59,8 @@ The UI should expose Auto, Light, Balanced, and High quality rather than product
 
 Update flow
 
+The launcher checks GitHub at most once every `check_interval_hours` (24 hours by default). A manual `updater.py check --force` bypasses the cache. Cached results are reused only while the repository, prerelease policy, and installed version still match.
+
 1. The launcher reads `updater.json`.
 2. It checks the latest published GitHub Release, not every commit or draft.
 3. It downloads `release-manifest.json` and the named ZIP asset.
@@ -75,12 +77,13 @@ GitHub release process
 3. Run `BUILD_RELEASE.bat`.
 4. Confirm the ZIP and `release-manifest.json` in `dist`.
 5. Push a matching tag such as `v1.0.0`.
-6. GitHub Actions creates a draft Release.
-7. Review release notes and publish the draft. Only publication makes it visible to normal update checks.
+6. GitHub Actions rejects a tag that does not match `VERSION` and creates a draft Release.
+7. Tags containing `-` are marked as prereleases, for example `v1.0.0-dev.1`.
+8. Review release notes and publish the draft. Only publication makes it visible to normal update checks.
 
 Repository configuration
 
-Copy `updater.example.json` to the installed root as `updater.json`, then replace `GITHUB_USERNAME/streamer-caption` with the final public repository. A private repository requires authentication and must not embed a personal access token in the app.
+The installer copies `updater.example.json` to the installed root as `updater.json`. It targets `vtubeadmirer/streamer-caption`. The repository must be public before unauthenticated users can check and download releases. Do not embed a personal access token in the app.
 
 Public-build exclusions
 
@@ -89,6 +92,5 @@ The release builder rejects or excludes live configuration, slang dictionaries, 
 Decisions still required before public launch
 
 - Choose the project license. Do not publish as open source until the owner selects a license.
-- Replace the GitHub repository placeholder.
 - Test full dependency installation and a live caption session on the RTX 4060 Ti machine.
 - Consider Windows code signing to reduce SmartScreen warnings.

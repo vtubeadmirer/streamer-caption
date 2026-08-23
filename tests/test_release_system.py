@@ -70,6 +70,7 @@ def main() -> int:
         assert not any(name.startswith("logs/") for name in names)
         assert not any(name.endswith(".wav") for name in names)
         assert not any(name.endswith(".sqlite3") for name in names)
+        assert "update-check-cache.json" not in names
 
         install_root = base / "installed"
         install_archive(install_root, manifest, asset)

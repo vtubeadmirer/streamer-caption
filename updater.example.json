@@ -1,7 +1,8 @@
 {
-  "repository": "GITHUB_USERNAME/streamer-caption",
+  "repository": "vtubeadmirer/streamer-caption",
   "channel": "stable",
   "check_on_start": true,
+  "check_interval_hours": 24,
   "keep_versions": 2,
   "allow_prerelease": false,
   "skipped_version": null

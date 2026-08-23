@@ -18,7 +18,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validate release system
-        run: python tests/test_release_system.py
+        shell: pwsh
+        run: |
+          python tests/test_release_system.py
+          python tests/test_updater_cache.py
+      - name: Validate tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $expected = "v$((Get-Content VERSION -Raw).Trim())"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag ${{ github.ref_name }} does not match VERSION $expected"
+          }
       - name: Build privacy-safe release assets
         run: python tools/build_public_release.py
       - name: Upload workflow artifact
@@ -33,4 +44,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/*.zip dist/release-manifest.json --draft --generate-notes --verify-tag
+        run: |
+          $zip = @(Get-ChildItem -LiteralPath dist -Filter "*.zip")
+          if ($zip.Count -ne 1) {
+            throw "Expected exactly one release ZIP; found $($zip.Count)"
+          }
+          $manifest = (Resolve-Path "dist/release-manifest.json").Path
+          $releaseArgs = @("${{ github.ref_name }}", $zip[0].FullName, $manifest, "--draft", "--generate-notes", "--verify-tag")
+          if ("${{ github.ref_name }}" -match "-") {
+            $releaseArgs += "--prerelease"
+          }
+          gh release create @releaseArgs

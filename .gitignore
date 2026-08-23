@@ -29,4 +29,5 @@ downloads/
 dist/
 state.json
 updater.json
+update-check-cache.json
 *.partial

@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 import uuid
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from typing import Any
 LAUNCHER_VERSION = "1.0.0"
 MANIFEST_ASSET = "release-manifest.json"
 USER_AGENT = "StreamerCaptionUpdater/1.0"
+UPDATE_CHECK_CACHE = "update-check-cache.json"
+DEFAULT_CHECK_INTERVAL_HOURS = 24.0
 
 
 class UpdateError(RuntimeError):
@@ -147,7 +150,86 @@ def load_updater_config(install_root: Path) -> dict[str, Any]:
     return _read_json(path)
 
 
-def check_for_update(install_root: Path) -> dict[str, Any]:
+def _utc(value: datetime | None = None) -> datetime:
+    current = value or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc)
+
+
+def _check_interval_hours(config: dict[str, Any]) -> float:
+    try:
+        interval = float(config.get("check_interval_hours", DEFAULT_CHECK_INTERVAL_HOURS))
+    except (TypeError, ValueError):
+        interval = DEFAULT_CHECK_INTERVAL_HOURS
+    return min(max(interval, 0.0), 24.0 * 30.0)
+
+
+def _cached_update_status(
+    install_root: Path,
+    *,
+    repository: str,
+    allow_prerelease: bool,
+    current_version: str,
+    interval_hours: float,
+    now: datetime,
+) -> dict[str, Any] | None:
+    if interval_hours <= 0:
+        return None
+    path = install_root / UPDATE_CHECK_CACHE
+    if not path.exists():
+        return None
+    try:
+        cache = _read_json(path)
+        checked = datetime.fromisoformat(str(cache.get("checked_at", "")).replace("Z", "+00:00"))
+    except (OSError, ValueError, json.JSONDecodeError, UpdateError):
+        return None
+    if (
+        cache.get("repository") != repository
+        or bool(cache.get("allow_prerelease")) != allow_prerelease
+        or str(cache.get("current_version")) != current_version
+    ):
+        return None
+    age = now - _utc(checked)
+    if age < timedelta(0) or age >= timedelta(hours=interval_hours):
+        return None
+    status = cache.get("status")
+    if not isinstance(status, dict):
+        return None
+    result = dict(status)
+    result["cached"] = True
+    result["checked_at"] = cache["checked_at"]
+    return result
+
+
+def _write_update_cache(
+    install_root: Path,
+    *,
+    repository: str,
+    allow_prerelease: bool,
+    current_version: str,
+    checked_at: datetime,
+    status: dict[str, Any],
+) -> None:
+    _atomic_json(
+        install_root / UPDATE_CHECK_CACHE,
+        {
+            "schema_version": 1,
+            "checked_at": checked_at.isoformat(),
+            "repository": repository,
+            "allow_prerelease": allow_prerelease,
+            "current_version": current_version,
+            "status": status,
+        },
+    )
+
+
+def check_for_update(
+    install_root: Path,
+    *,
+    force: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     state = load_state(install_root)
     config = load_updater_config(install_root)
     current = str(state.get("current_version") or "0.0.0")
@@ -159,12 +241,26 @@ def check_for_update(install_root: Path) -> dict[str, Any]:
             "current_version": current,
             "reason": "repository_not_configured",
         }
-    resolved = _resolve_github_release(repository, bool(config.get("allow_prerelease", False)))
+    allow_prerelease = bool(config.get("allow_prerelease", False))
+    checked_at = _utc(now)
+    if not force:
+        cached = _cached_update_status(
+            install_root,
+            repository=repository,
+            allow_prerelease=allow_prerelease,
+            current_version=current,
+            interval_hours=_check_interval_hours(config),
+            now=checked_at,
+        )
+        if cached is not None:
+            return cached
+
+    resolved = _resolve_github_release(repository, allow_prerelease)
     manifest = resolved["manifest"]
     latest = _validate_version(str(manifest.get("version", "")))
     skipped = str(config.get("skipped_version") or "").lstrip("v")
     available = _version_key(latest) > _version_key(current) and latest != skipped
-    return {
+    result = {
         "configured": True,
         "available": available,
         "current_version": current,
@@ -173,7 +269,21 @@ def check_for_update(install_root: Path) -> dict[str, Any]:
         "release_notes": str(manifest.get("release_notes", "")),
         "manifest": manifest,
         "asset_url": resolved["asset_url"],
+        "cached": False,
+        "checked_at": checked_at.isoformat(),
     }
+    try:
+        _write_update_cache(
+            install_root,
+            repository=repository,
+            allow_prerelease=allow_prerelease,
+            current_version=current,
+            checked_at=checked_at,
+            status=result,
+        )
+    except OSError:
+        pass
+    return result
 
 
 def _safe_extract(archive: Path, destination: Path) -> None:
@@ -253,7 +363,7 @@ def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path)
 
 
 def update_from_github(install_root: Path) -> dict[str, Any]:
-    status = check_for_update(install_root)
+    status = check_for_update(install_root, force=True)
     if not status.get("available"):
         return status
     manifest = status["manifest"]
@@ -288,7 +398,10 @@ def _print(value: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Streamer Caption side-by-side updater")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("check", "update", "rollback"):
+    check = subparsers.add_parser("check")
+    check.add_argument("--install-root", required=True, type=Path)
+    check.add_argument("--force", action="store_true")
+    for command in ("update", "rollback"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--install-root", required=True, type=Path)
     local = subparsers.add_parser("install-local")
@@ -299,7 +412,7 @@ def main() -> int:
 
     try:
         if args.command == "check":
-            result = check_for_update(args.install_root)
+            result = check_for_update(args.install_root, force=args.force)
         elif args.command == "update":
             result = update_from_github(args.install_root)
         elif args.command == "rollback":
