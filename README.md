@@ -1,0 +1,508 @@
+# streamer-caption-v2
+
+Real-time local captioning for streamers, rebuilt from the handoff documents.
+
+Important project rule: there is no usable v1 source tree in this workspace. This
+project therefore starts with a document-based `baseline_v1_mode`, then layers
+v2 streaming behavior on top.
+
+## Build Order
+
+1. `baseline_v1_mode`
+   - Energy VAD.
+   - Segment-level faster-whisper transcription.
+   - Local WebSocket caption output.
+   - JSONL logging.
+2. `v2_light`
+   - Silero VAD on CPU.
+   - Streaming STT interface with pending/confirmed events.
+   - Sample-count based audio offsets.
+   - Ring buffer, recovery, and memory monitoring.
+3. `v2_full`
+   - Replace only the STT engine with SimulStreaming-compatible adapter.
+
+## Hardware Target
+
+The implementation should be tuned for RTX 4060 Ti 16GB even if development is
+done on a stronger GPU. Use one STT model at a time, prefer GPU fallback over
+crashing, and keep memory logging enabled during long tests.
+
+Hardware profiles are available:
+
+```powershell
+.\.venv\Scripts\python.exe tools\apply_profile.py --list
+.\.venv\Scripts\python.exe tools\apply_profile.py rtx_4060ti_16gb
+.\.venv\Scripts\python.exe tools\apply_profile.py rtx_5070ti_quality
+```
+
+The 4060 Ti profile keeps `large-v3` but switches CUDA compute to
+`int8_float16` and uses shorter buffers to reduce VRAM pressure. The profile
+tool keeps the tuned mic device, VAD threshold, input gain, and min peak RMS by
+default.
+
+## Quick Check
+
+```powershell
+.\.venv\Scripts\python.exe -m py_compile main.py core\*.py engines\baseline\*.py
+.\.venv\Scripts\python.exe check_runtime.py
+.\.venv\Scripts\python.exe check_gpu.py
+.\.venv\Scripts\python.exe tests\test_energy_vad.py
+.\.venv\Scripts\python.exe tests\test_ws_server.py
+.\.venv\Scripts\python.exe tests\test_text_processing.py
+.\.venv\Scripts\python.exe tests\test_admin_server.py
+```
+
+Small model load/transcription smoke test:
+
+```powershell
+.\.venv\Scripts\python.exe smoke_transcribe.py --model tiny
+```
+
+Large model CUDA smoke test with post-processing:
+
+```powershell
+.\.venv\Scripts\python.exe smoke_transcribe.py --model large-v3 --seconds 1 --postprocess
+```
+
+The silent-input `large-v3` smoke test may produce a subtitle-credit hallucination.
+The post-processing path should hide it as `caption_hidden`.
+
+## Mic Check Without OBS
+
+Install the lightweight mic-check dependencies in the project venv:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install numpy sounddevice
+```
+
+List input devices:
+
+```powershell
+.\.venv\Scripts\python.exe mic_monitor.py --list-devices
+```
+
+Monitor the configured mic device from `config.json`:
+
+```powershell
+.\.venv\Scripts\python.exe mic_monitor.py
+```
+
+Speak into the mic and watch the RMS bar. If it moves, the app can see mic
+input. If it stays flat, try another device index:
+
+```powershell
+.\.venv\Scripts\python.exe mic_monitor.py --device 1
+```
+
+Run a short automated check:
+
+```powershell
+.\.venv\Scripts\python.exe mic_monitor.py --duration-seconds 5
+```
+
+## Browser Caption Preview Without OBS
+
+Open this file in a browser:
+
+```text
+<project-root>\overlay\caption.html
+```
+
+Then start live baseline mode:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+When speech is detected and transcribed, captions are sent to the browser through
+`ws://127.0.0.1:8765`.
+
+The admin page is available at:
+
+```text
+http://127.0.0.1:8766/admin
+```
+
+For a short controlled run:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --max-segments 1
+.\.venv\Scripts\python.exe main.py --max-seconds 10
+```
+
+Show live RMS/threshold levels in the console:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --max-seconds 10 --show-levels
+```
+
+Run the first v2_light streaming path with pending captions:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --v2-light
+.\.venv\Scripts\python.exe main.py --v2-light --max-seconds 10 --show-levels
+```
+
+Primary supervised launch:
+
+    run_v2_light.bat
+
+v2_light keeps the STT model in one child process. An ordinary STT stall
+restarts only that child and re-sends the active confirmed audio while
+audio/VAD/admin services stay alive. The outer supervisor restarts the whole
+caption app only after audio recovery or STT-child recovery is exhausted.
+Normal exit and Ctrl+C do not restart.
+
+Caption a broadcast playing on the same PC:
+
+    list_audio_sources.bat
+    run_listener_mode.bat
+
+The listener mode uses Windows output loopback. It captures every sound sent to
+the selected output device, not one specific browser or application. Run START_HERE option AH after updating so the SoundCard dependency is installed without clearing the existing virtual environment.
+The same actions are START_HERE options AG (list) and AF (run listener mode).
+
+Run longer v2_light stability checks:
+
+```powershell
+run_v2_light_10min.bat
+run_v2_light_30min.bat
+.\.venv\Scripts\python.exe tools\summarize_session.py --latest
+.\.venv\Scripts\python.exe tools\summarize_memory.py --latest
+```
+
+Status-only check without opening the mic:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --status-only
+```
+
+## Repeatable Voice Test Clips
+
+For the easiest path, double-click:
+
+```text
+START_HERE.bat
+```
+
+If anything feels off, run:
+
+```text
+health_check.bat
+```
+
+or:
+
+```powershell
+.\.venv\Scripts\python.exe tools\health_check.py
+```
+
+If the mic opens but recorded RMS is very low, compare input devices:
+
+```powershell
+.\.venv\Scripts\python.exe tools\probe_input_devices.py --seconds 2
+```
+
+Change the configured input device:
+
+```powershell
+.\.venv\Scripts\python.exe tools\set_audio_device.py 21
+```
+
+Boost low microphone input in software:
+
+```powershell
+.\.venv\Scripts\python.exe tools\set_input_gain.py 10
+```
+
+Record a 10-second WAV clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\record_wav.py --seconds 10 --out samples\test_clip.wav
+```
+
+Import a recording file you already have, including common formats such as WAV,
+MP3, M4A, or WEBM, into the standard test clip path:
+
+```powershell
+.\.venv\Scripts\python.exe tools\import_audio.py "path\to\recording.m4a" --out samples\test_clip.wav
+```
+
+Or place the file in `samples\incoming` and import the newest file:
+
+```powershell
+.\.venv\Scripts\python.exe tools\import_latest_audio.py
+```
+
+Transcribe that same clip repeatedly while tuning settings:
+
+```powershell
+.\.venv\Scripts\python.exe tools\transcribe_wav.py samples\test_clip.wav
+```
+
+Analyze loudness for VAD threshold tuning:
+
+```powershell
+.\.venv\Scripts\python.exe tools\analyze_wav.py samples\test_clip.wav
+```
+
+Analyze both energy VAD and Silero VAD on the same clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\tune_voice_wav.py samples\test_clip.wav
+```
+
+Apply the recommended VAD settings only after recording a real speech clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\tune_voice_wav.py samples\test_clip.wav --apply
+```
+
+Switch VAD engines manually:
+
+```powershell
+.\.venv\Scripts\python.exe tools\set_vad_engine.py silero --speech-threshold 0.5
+.\.venv\Scripts\python.exe tools\set_vad_engine.py energy
+```
+
+Run the full record, tune, transcribe, and v2_light benchmark workflow:
+
+```powershell
+.\.venv\Scripts\python.exe tools\record_tune_benchmark.py --seconds 10 --apply-tuning
+.\.venv\Scripts\python.exe tools\record_tune_benchmark.py --skip-record --apply-tuning
+```
+
+Compare 4060 Ti and 5070 Ti profiles on the same clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\compare_profiles.py samples\test_clip.wav
+```
+
+Generate a progress report:
+
+```powershell
+.\.venv\Scripts\python.exe tools\progress_report.py
+```
+
+Backup the current config and create a handoff bundle:
+
+```powershell
+.\.venv\Scripts\python.exe tools\backup_config.py
+.\.venv\Scripts\python.exe tools\make_handoff_bundle.py
+```
+
+Streamer-specific slang and protected words can be edited in the admin page
+under `Slang / Protected Terms`. Use `heard=show` pairs such as
+`샌드위치=샹도웨쭈`, and add protected words such as `샹도웨쭈` one per line when
+the defense filter should not hide them.
+
+For one streamer-specific word with several possible recognitions, register
+all heard variants:
+
+```text
+샌드위치=샹도웨쭈
+산도웨쭈=샹도웨쭈
+샨도웨이쭈=샹도웨쭈
+```
+
+Caption size and line count are edited in the admin `Caption` section. The
+browser caption page refreshes these display settings automatically. Set
+`한글 크기` as low as 6 when a small browser overlay is needed. `최대 줄 수`
+supports up to 500 lines. Use the admin header Caption Preview button to open a separate scrollable preview window. Enable `저스트 채팅 모드` to keep a rolling caption
+history on screen for viewers who arrive late.
+ Confirmed captions and pending previews use separate display areas. For fast
+speakers, start the Fast speech reading hold setting at 0.65 seconds; use
+0.8-1.0 seconds for longer reading time or 0.4-0.5 seconds when the display
+backlog grows.
+
+See UPDATE_NOTES_2026-07-11.md for the current stability update and recommended
+hallucination, short-speech, latency, and Just Chatting settings.
+
+For updates after the first install, use `make_update_zip.bat`. The generated
+`streamer_caption_v2_update_keep_settings_*.zip` does not overwrite
+`config.json`, `data/slang_dict.json`, `data/whitelist.txt`, or
+`data/blocklist.txt`. Use `backup_user_settings.bat` before risky updates and
+`restore_user_settings.bat` if settings need to be restored.
+
+When asking Codex to review a failed run, use `make_support_bundle.bat` and send
+the generated `streamer_caption_v2_support_*.zip`. It includes config, latest
+reports, and the newest log folder without bundling audio samples.
+
+Apply the recommended 4060 Ti preset and run final checks:
+
+```powershell
+.\.venv\Scripts\python.exe tools\apply_preset.py recommended_4060ti_v2_light
+.\.venv\Scripts\python.exe tools\final_check.py
+```
+
+When no real voice clip is available, run a synthetic pipeline check:
+
+```powershell
+.\.venv\Scripts\python.exe tools\make_synthetic_voice_clip.py --out samples\synthetic_voice.wav
+.\.venv\Scripts\python.exe tools\tune_voice_wav.py samples\synthetic_voice.wav --vad-engine energy
+.\.venv\Scripts\python.exe tools\benchmark_streaming_wav.py samples\synthetic_voice.wav --vad-engine energy
+```
+
+Run the whole voice-test workflow and save a JSON report:
+
+```powershell
+.\.venv\Scripts\python.exe tools\voice_test_workflow.py --seconds 10 --out samples\test_clip.wav
+```
+
+Apply the suggested VAD threshold from that clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\apply_vad_threshold.py samples\test_clip.wav --from-analysis
+```
+
+The apply tool clamps suggestions to a safer range by default
+(`0.003` to `0.08`) so a quiet-room clip does not make the mic too sensitive.
+
+Benchmark the same clip repeatedly:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_wav.py samples\test_clip.wav --repeat 3
+```
+
+Benchmark the v2_light streaming path on the same clip:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_streaming_wav.py samples\test_clip.wav
+```
+
+Warm benchmark, closer to live use after the model is already loaded:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_wav.py samples\test_clip.wav --repeat 3 --warm
+```
+
+For cleaner warm numbers, discard the first measured run:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_wav.py samples\test_clip.wav --repeat 4 --warm --discard-first
+```
+
+With a reference transcript:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_wav.py samples\test_clip.wav --reference "여기에 정답 문장" --repeat 3
+```
+
+Summarize the latest benchmark:
+
+```powershell
+.\.venv\Scripts\python.exe tools\summarize_benchmark.py --latest
+```
+
+Collect a shareable local diagnostics report:
+
+```powershell
+.\.venv\Scripts\python.exe tools\collect_diagnostics.py
+.\.venv\Scripts\python.exe tools\collect_diagnostics.py --model-load
+```
+
+Summarize the latest memory log:
+
+```powershell
+.\.venv\Scripts\python.exe tools\summarize_memory.py --latest
+```
+
+Summarize the latest caption/session log:
+
+```powershell
+.\.venv\Scripts\python.exe tools\summarize_session.py --latest
+```
+
+Double-click helpers are also available:
+
+```text
+record_test_clip.bat
+transcribe_test_clip.bat
+analyze_test_clip.bat
+voice_test_workflow.bat
+apply_vad_from_test_clip.bat
+benchmark_test_clip.bat
+benchmark_test_clip_warm.bat
+benchmark_streaming_test_clip.bat
+tune_voice_test_clip.bat
+apply_voice_tuning_test_clip.bat
+set_vad_silero.bat
+set_vad_energy.bat
+record_tune_benchmark.bat
+tune_benchmark_existing_clip.bat
+compare_profiles_test_clip.bat
+progress_report.bat
+apply_recommended_4060ti.bat
+apply_stable_4060ti.bat
+synthetic_pipeline_check.bat
+import_audio_to_test_clip.bat
+import_latest_audio_to_test_clip.bat
+stability_verdict_latest.bat
+backup_config.bat
+make_handoff_bundle.bat
+benchmark_looped_10min.bat
+FINAL_CHECK.bat
+summarize_latest_benchmark.bat
+health_check.bat
+run_baseline.bat
+run_baseline_10sec.bat
+run_v2_light.bat
+run_v2_light_10sec.bat
+run_v2_light_10min.bat
+run_v2_light_30min.bat
+apply_4060ti_profile.bat
+apply_5070ti_profile.bat
+collect_diagnostics.bat
+collect_diagnostics_model_load.bat
+summarize_memory_latest.bat
+summarize_latest_session.bat
+```
+
+If a tool says `WAV file not found`, record `samples\test_clip.wav` first with
+`record_test_clip.bat` or option 2 in `START_HERE.bat`.
+## Phase 2/3 archive prototype
+
+Confirmed captions are indexed locally in `data/transcripts.sqlite3` without storing raw audio.
+
+- Conversation archive: `http://127.0.0.1:8766/history`
+- 30-minute summary overlay: `http://127.0.0.1:8766/summary`
+- GPU-free demo: `PREVIEW_PHASE23.bat`
+- Architecture and implementation report: `docs/PHASE_2_3_INTEGRATION_REPORT.md`
+- Post-broadcast reports: `logs/<session>/broadcast_report.json` and `broadcast_report.md`
+- Live confirmed-caption text: `logs/<session>/captions.txt`
+- Current session text at a fixed path: `logs/latest_captions.txt`
+- Past-session TXT export: select a broadcast in `/history`, then click `선택 방송 TXT 저장`
+- Live issue marker: `http://127.0.0.1:8766/validate`
+- One-click validation report: `VALIDATE_LATEST_BROADCAST.bat`
+
+During a broadcast, keep `/validate` open and mark hallucinations, missed speech,
+wrong words, or a correctly recognized reference moment. Each marker stores the
+current audio offset, the latest caption, and an optional note. After the run,
+`VALIDATE_LATEST_BROADCAST.bat` writes `validation_report.json` and
+`validation_report.md` beside the session log. `make_support_bundle.bat` also
+creates this report automatically before collecting the latest logs.
+
+If the app is force-killed, the next normal start or validation run closes the
+orphaned archive session and regenerates its report when the log directory is
+available. A session whose saved process is still alive is never recovered or
+deleted.
+
+Use the Archive Management section in `/history` to export the entire SQLite
+archive, prune ended sessions older than a selected number of days, or delete a
+selected ended broadcast. Prune and delete operations create a backup first in
+`reports/archive_backups`. They remove the SQLite archive entry only; original
+`logs/<session>` files are retained. See
+`docs/BROADCAST_VALIDATION_AND_ARCHIVE_OPERATIONS.md` for the full workflow and
+API contract.
+
+The demo uses a separate database under `reports/phase23_demo`; it does not add synthetic captions to the production archive. Update bundles preserve the production transcript database.
+## Release installer and automatic updates
+
+The versioned release workflow is documented in `docs/RELEASE_AND_UPDATE_ARCHITECTURE.md`.
+
+- New users run `INSTALL.bat` once.
+- Installed users start with `START_STREAMER_CAPTION.bat`.
+- Application versions, shared runtime, and persistent user data are stored separately.
+- `BUILD_RELEASE.bat` creates a privacy-safe GitHub Release ZIP and SHA-256 manifest.
+- FFmpeg is optional and is installed separately with `INSTALL_OPTIONAL_FFMPEG.bat`.

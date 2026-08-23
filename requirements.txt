@@ -1,0 +1,7 @@
+faster-whisper==1.2.1
+numpy==2.5.1
+sounddevice==0.5.5
+av==18.0.0
+silero-vad==6.2.1
+websockets==16.1
+SoundCard==0.4.6

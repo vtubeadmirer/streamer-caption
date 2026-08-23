@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>방송 기록 - Streamer Caption</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --surface-2: #f0f2f5;
+      --text: #15181d;
+      --muted: #66707d;
+      --line: #dce1e7;
+      --accent: #12715b;
+      --accent-soft: #dff3ec;
+      --accent-2: #c8533d;
+      --danger: #b52f2a;
+      --focus: #1677c8;
+      --shadow: 0 8px 28px rgba(20, 29, 38, 0.08);
+      --radius: 6px;
+    }
+    body[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #13171a;
+      --surface: #1b2024;
+      --surface-2: #242a2f;
+      --text: #edf1f3;
+      --muted: #a4afb7;
+      --line: #343c43;
+      --accent: #58bea3;
+      --accent-soft: #173b33;
+      --accent-2: #e17b66;
+      --danger: #ff918a;
+      --focus: #6cb8ef;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    button, input, select {
+      color: inherit;
+      font: inherit;
+      letter-spacing: 0;
+    }
+    button, select, input[type="text"], input[type="url"], input[type="number"] {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    button { cursor: pointer; padding: 0 12px; }
+    button:hover { border-color: var(--accent); }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+    button.ghost { background: transparent; }
+    button.icon-button {
+      width: 36px;
+      padding: 0;
+      font-size: 18px;
+      line-height: 1;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      min-height: 58px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .topbar-inner {
+      width: min(1480px, 100%);
+      min-height: 58px;
+      margin: 0 auto;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 190px;
+    }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+    }
+    .brand h1 { margin: 0; font-size: 17px; line-height: 1.15; }
+    .brand span { color: var(--muted); font-size: 11px; }
+    .session-select { flex: 1; min-width: 180px; max-width: 520px; padding: 0 34px 0 10px; }
+    .top-actions { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+    .nav-link {
+      min-height: 36px;
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--text);
+      background: var(--surface);
+    }
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .connection::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9aa3aa;
+    }
+    .connection.ok::before { background: #1f9d70; }
+    .connection.error::before { background: #d44d42; }
+    .workspace { width: min(1480px, 100%); margin: 0 auto; }
+    .control-band {
+      padding: 14px 20px;
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .search-form { display: flex; gap: 7px; }
+    .search-form input { flex: 1; min-width: 0; padding: 0 11px; }
+    .control-options { display: flex; align-items: center; gap: 12px; }
+    .switch-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .switch-label input { width: 16px; height: 16px; accent-color: var(--accent); }
+    .bucket-band {
+      min-height: 52px;
+      padding: 8px 20px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .bucket-button {
+      flex: 0 0 auto;
+      min-width: 92px;
+      background: var(--surface);
+      color: var(--muted);
+    }
+    .bucket-button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--text);
+      font-weight: 700;
+    }
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.75fr);
+      min-height: calc(100vh - 166px);
+    }
+    .transcript-pane {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .pane-heading {
+      height: 52px;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .pane-heading h2 { margin: 0; font-size: 15px; }
+    .pane-heading .count { margin-left: auto; color: var(--muted); }
+    .transcript-list {
+      height: calc(100vh - 218px);
+      min-height: 420px;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .caption-row {
+      width: 100%;
+      min-height: 52px;
+      padding: 11px 20px;
+      display: grid;
+      grid-template-columns: 70px minmax(0, 1fr);
+      gap: 12px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      text-align: left;
+    }
+    .caption-row:hover { background: var(--surface-2); }
+    .caption-row.flash { background: var(--accent-soft); }
+    .caption-time { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; }
+    .caption-text { min-width: 0; line-height: 1.65; overflow-wrap: anywhere; }
+    mark { background: #ffdf75; color: #201b0d; padding: 0 2px; }
+    .empty {
+      min-height: 220px;
+      display: grid;
+      place-items: center;
+      padding: 30px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .insight-pane {
+      min-width: 0;
+      background: var(--bg);
+      overflow-y: auto;
+      height: calc(100vh - 166px);
+    }
+    .insight-section {
+      padding: 17px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .section-heading {
+      margin-bottom: 12px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .section-heading h3 { margin: 0; font-size: 14px; }
+    .section-heading span { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .summary-title { margin: 0 0 10px; color: var(--accent); font-size: 15px; }
+    .summary-list, .topic-list, .highlight-list, .slang-list { margin: 0; padding: 0; list-style: none; }
+    .summary-list li, .topic-list li, .highlight-list li, .slang-list li {
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+      line-height: 1.5;
+    }
+    .summary-list li:first-child, .topic-list li:first-child, .highlight-list li:first-child, .slang-list li:first-child { border-top: 0; }
+    .jump-button {
+      width: 100%;
+      min-height: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: 62px minmax(0, 1fr);
+      gap: 8px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      line-height: 1.5;
+    }
+    .jump-button:hover { color: var(--accent); }
+    .jump-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .keywords { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .keyword {
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface-2);
+      font-size: 12px;
+    }
+    .timeline-chart { display: grid; gap: 8px; }
+    .timeline-row {
+      min-height: 28px;
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr) 34px;
+      gap: 8px;
+      align-items: center;
+    }
+    .timeline-label, .timeline-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .timeline-track {
+      height: 9px;
+      overflow: hidden;
+      border-radius: 3px;
+      background: var(--surface-2);
+      cursor: pointer;
+    }
+    .timeline-fill { height: 100%; min-width: 2px; background: var(--accent); }
+    .timeline-row.active .timeline-fill { background: var(--accent-2); }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .stat { min-width: 0; padding: 10px; border-right: 1px solid var(--line); }
+    .stat:last-child { border-right: 0; }
+    .stat strong { display: block; font-size: 16px; overflow-wrap: anywhere; }
+    .stat span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .metadata-form { display: grid; gap: 9px; }
+    .metadata-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+    .metadata-form input { width: 100%; min-width: 0; padding: 0 9px; color: var(--text); }
+    .metadata-actions { display: flex; gap: 7px; }
+    .metadata-actions button { flex: 1; }
+    .archive-overview {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      margin-bottom: 10px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .archive-metric { padding: 9px 10px; background: var(--surface-2); }
+    .archive-metric strong { display: block; font-size: 15px; }
+    .archive-metric span { color: var(--muted); font-size: 11px; }
+    .archive-actions { display: grid; gap: 8px; }
+    .retention-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 7px; }
+    .retention-row input { width: 100%; padding: 0 9px; }
+    button.danger { border-color: var(--danger); color: var(--danger); background: var(--surface); }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    .archive-note { margin: 9px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .slang-action { color: var(--accent-2); font-size: 11px; text-transform: uppercase; }
+    .slang-pair { display: block; margin-top: 2px; overflow-wrap: anywhere; }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      max-width: min(380px, calc(100vw - 36px));
+      padding: 11px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 980px) {
+      .topbar-inner { flex-wrap: wrap; }
+      .brand { min-width: 160px; }
+      .session-select { order: 3; max-width: none; width: 100%; }
+      .content-grid { grid-template-columns: 1fr; }
+      .transcript-pane { border-right: 0; }
+      .transcript-list { height: min(58vh, 680px); min-height: 360px; }
+      .insight-pane { height: auto; overflow: visible; border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 650px) {
+      .topbar-inner, .control-band, .bucket-band { padding-left: 12px; padding-right: 12px; }
+      .top-actions .nav-link { display: none; }
+      .connection { font-size: 0; }
+      .control-band { grid-template-columns: 1fr; }
+      .control-options { justify-content: space-between; }
+      .caption-row { grid-template-columns: 58px minmax(0, 1fr); padding-left: 12px; padding-right: 12px; }
+      .insight-section { padding-left: 12px; padding-right: 12px; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .stat { border-right: 0; border-bottom: 1px solid var(--line); }
+      .stat:last-child { border-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">SC</div>
+        <div><h1>방송 기록</h1><span>Streamer Caption Archive</span></div>
+      </div>
+      <select id="sessionSelect" class="session-select" aria-label="방송 세션"></select>
+      <div class="top-actions">
+        <span id="connectionState" class="connection">연결 중</span>
+        <a class="nav-link" href="/summary" target="_blank">30분 요약</a>
+        <a class="nav-link" href="/validate">방송 검증</a>
+        <a class="nav-link" href="/caption" target="_blank">자막</a>
+        <a class="nav-link" href="/admin">설정</a>
+        <button id="themeButton" class="icon-button" type="button" title="밝은 화면과 어두운 화면 전환" aria-label="화면 테마 전환">◐</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="control-band" aria-label="기록 검색">
+      <form id="searchForm" class="search-form">
+        <input id="searchInput" type="text" maxlength="200" placeholder="현재 방송 기록 검색" autocomplete="off">
+        <button class="primary" type="submit">검색</button>
+        <button id="clearSearch" class="ghost" type="button" hidden>구간 보기</button>
+      </form>
+      <div class="control-options">
+        <label class="switch-label"><input id="liveRefresh" type="checkbox" checked>실시간 갱신</label>
+        <button id="refreshButton" class="icon-button" type="button" title="새로고침" aria-label="새로고침">↻</button>
+      </div>
+    </section>
+
+    <nav id="bucketBand" class="bucket-band" aria-label="30분 구간"></nav>
+
+    <div class="content-grid">
+      <section class="transcript-pane">
+        <div class="pane-heading">
+          <h2 id="transcriptTitle">대화 기록</h2>
+          <span id="captionCount" class="count">0개</span>
+        </div>
+        <div id="transcriptList" class="transcript-list"></div>
+      </section>
+
+      <aside class="insight-pane">
+        <section class="insight-section">
+          <div class="section-heading"><h3>30분 요약</h3><span id="summaryRange">-</span></div>
+          <h4 id="summaryTitle" class="summary-title">기록 없음</h4>
+          <ul id="summaryList" class="summary-list"></ul>
+          <div id="keywordList" class="keywords"></div>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>방송 타임라인</h3><span>30분 단위</span></div>
+          <div id="timelineChart" class="timeline-chart"></div>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>주제 전환 후보</h3><span id="topicCount">0개</span></div>
+          <ul id="topicList" class="topic-list"></ul>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>하이라이트 후보</h3><span id="highlightCount">0개</span></div>
+          <ul id="highlightList" class="highlight-list"></ul>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>음성 통계</h3><span id="durationText">00:00:00</span></div>
+          <div class="stats-grid">
+            <div class="stat"><strong id="statCaptions">0</strong><span>확정 자막</span></div>
+            <div class="stat"><strong id="statRate">0</strong><span>분당 자막</span></div>
+            <div class="stat"><strong id="statChars">0</strong><span>전체 글자</span></div>
+          </div>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>다시보기 연결</h3><span id="vodTime">-</span></div>
+          <form id="metadataForm" class="metadata-form">
+            <label>방송 제목<input id="sessionTitle" type="text" maxlength="200"></label>
+            <label>다시보기 주소<input id="vodUrl" type="url" maxlength="2000" placeholder="https://..."></label>
+            <label>방송 시작 보정(초)<input id="vodOffset" type="number" min="-86400" max="86400" step="1" value="0"></label>
+            <div class="metadata-actions">
+              <button class="primary" type="submit">저장</button>
+              <button id="openVod" type="button" disabled>다시보기 열기</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>아카이브 관리</h3><span id="archiveSize">-</span></div>
+          <div class="archive-overview">
+            <div class="archive-metric"><strong id="archiveSessions">0</strong><span>방송 세션</span></div>
+            <div class="archive-metric"><strong id="archiveCaptions">0</strong><span>저장 자막</span></div>
+            <div class="archive-metric"><strong id="archiveAnnotations">0</strong><span>검증 표시</span></div>
+            <div class="archive-metric"><strong id="archiveOldest">-</strong><span>가장 오래된 기록</span></div>
+          </div>
+          <div class="archive-actions">
+            <button id="downloadTranscript" type="button" disabled>선택 방송 TXT 저장</button>
+            <button id="backupArchive" type="button">전체 아카이브 백업</button>
+            <div class="retention-row">
+              <input id="retentionDays" type="number" min="1" max="3650" step="1" value="90" aria-label="보존 기간 일수">
+              <button id="pruneArchive" type="button">기간 정리</button>
+            </div>
+            <button id="deleteSession" class="danger" type="button" disabled>선택 방송 삭제</button>
+          </div>
+          <p id="archiveResult" class="archive-note">삭제 전 자동 백업됩니다. 원본 세션 로그는 유지됩니다.</p>
+        </section>
+
+        <section class="insight-section">
+          <div class="section-heading"><h3>유행어 변경 이력</h3><span>최근 기록</span></div>
+          <ul id="slangList" class="slang-list"></ul>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      sessions: [],
+      sessionId: "",
+      session: null,
+      bucket: 0,
+      timeline: [],
+      captions: [],
+      searchQuery: "",
+      pollTimer: null,
+      bucketMinutes: 30,
+      lastAnalysisAt: 0,
+      lastCaptionCount: -1,
+    };
+
+    const el = (id) => document.getElementById(id);
+    const sessionSelect = el("sessionSelect");
+    const bucketBand = el("bucketBand");
+    const transcriptList = el("transcriptList");
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatOffset(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      return [h, m, s].map((part) => String(part).padStart(2, "0")).join(":");
+    }
+
+    function formatSession(session) {
+      const date = new Date(session.started_at);
+      const stamp = Number.isNaN(date.getTime())
+        ? session.started_at
+        : new Intl.DateTimeFormat("ko-KR", {
+            month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+          }).format(date);
+      return `${session.title || "제목 없는 방송"} · ${stamp} · ${session.caption_count}개`;
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      setConnection("ok", "연결됨");
+      return payload;
+    }
+
+    function setConnection(kind, text) {
+      const node = el("connectionState");
+      node.className = `connection ${kind || ""}`;
+      node.textContent = text;
+    }
+
+    let toastTimer;
+    function toast(message) {
+      const node = el("toast");
+      node.textContent = message;
+      node.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => node.classList.remove("show"), 2200);
+    }
+
+    async function loadSessions(keepSelection = true) {
+      const payload = await api("/api/archive/sessions?limit=100");
+      const previous = keepSelection ? state.sessionId : "";
+      state.sessions = payload.sessions || [];
+      state.bucketMinutes = Number(payload.bucket_minutes || 30);
+      sessionSelect.innerHTML = "";
+      if (!state.sessions.length) {
+        const option = document.createElement("option");
+        option.textContent = "아직 저장된 방송 기록이 없습니다";
+        option.value = "";
+        sessionSelect.appendChild(option);
+        state.sessionId = "";
+        renderEmpty("자막 실행 후 확정 자막이 생기면 이곳에 기록됩니다.");
+        clearInsights();
+        return false;
+      }
+      for (const session of state.sessions) {
+        const option = document.createElement("option");
+        option.value = session.id;
+        option.textContent = formatSession(session);
+        sessionSelect.appendChild(option);
+      }
+      const selected = state.sessions.some((item) => item.id === previous)
+        ? previous
+        : state.sessions[0].id;
+      state.sessionId = selected;
+      sessionSelect.value = selected;
+      return true;
+    }
+
+    async function loadSession(resetBucket = false) {
+      if (!state.sessionId) return;
+      const encoded = encodeURIComponent(state.sessionId);
+      const timelinePayload = await api(`/api/archive/timeline?session_id=${encoded}`);
+      state.session = timelinePayload.session;
+      state.timeline = timelinePayload.timeline || [];
+      if (resetBucket || !state.timeline.some((item) => item.bucket_index === state.bucket)) {
+        state.bucket = state.timeline.length
+          ? state.timeline[state.timeline.length - 1].bucket_index
+          : 0;
+      }
+      renderBuckets();
+      renderTimeline(timelinePayload.timeline || []);
+      renderTopics(timelinePayload.topics || []);
+      renderHighlights(timelinePayload.highlights || []);
+      renderStats(timelinePayload.stats || {});
+      state.lastCaptionCount = Number(
+        timelinePayload.stats?.caption_count || 0
+      );
+      state.lastAnalysisAt = Date.now();
+      fillMetadata(state.session);
+      if (!state.searchQuery) await loadBucket();
+      await loadSlangHistory();
+      await loadArchiveInfo();
+    }
+
+    async function loadBucket(focusId = null) {
+      if (!state.sessionId) return;
+      const encoded = encodeURIComponent(state.sessionId);
+      const [captionPayload, summary] = await Promise.all([
+        api(`/api/archive/captions?session_id=${encoded}&bucket=${state.bucket}&limit=5000`),
+        api(`/api/archive/summary?session_id=${encoded}&bucket=${state.bucket}`),
+      ]);
+      state.captions = captionPayload.captions || [];
+      renderCaptions(state.captions, "");
+      renderSummary(summary);
+      if (focusId !== null) focusCaption(focusId);
+    }
+
+    function renderBuckets() {
+      bucketBand.innerHTML = "";
+      if (!state.timeline.length) {
+        bucketBand.innerHTML = '<span class="connection">30분 구간 없음</span>';
+        return;
+      }
+      for (const bucket of state.timeline) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `bucket-button ${bucket.bucket_index === state.bucket ? "active" : ""}`;
+        button.textContent = `${formatOffset(bucket.window_start_sec).slice(0, 5)}–${formatOffset(bucket.window_end_sec).slice(0, 5)}`;
+        button.title = `확정 자막 ${bucket.caption_count}개`;
+        button.addEventListener("click", () => selectBucket(bucket.bucket_index));
+        bucketBand.appendChild(button);
+      }
+    }
+
+    async function selectBucket(bucket, focusId = null) {
+      state.bucket = Number(bucket) || 0;
+      state.searchQuery = "";
+      el("searchInput").value = "";
+      el("clearSearch").hidden = true;
+      renderBuckets();
+      renderTimeline(state.timeline);
+      await loadBucket(focusId);
+    }
+
+    function renderCaptions(captions, query) {
+      el("transcriptTitle").textContent = query ? `검색 결과: ${query}` : "대화 기록";
+      el("captionCount").textContent = `${captions.length}개`;
+      if (!captions.length) {
+        renderEmpty(query ? "검색 결과가 없습니다." : "이 구간에는 확정 자막이 없습니다.");
+        return;
+      }
+      const safeQuery = query.toLowerCase();
+      transcriptList.innerHTML = captions.map((caption) => {
+        let text = escapeHtml(caption.text);
+        if (safeQuery) {
+          const raw = String(caption.text);
+          const index = raw.toLowerCase().indexOf(safeQuery);
+          if (index >= 0) {
+            text = `${escapeHtml(raw.slice(0, index))}<mark>${escapeHtml(raw.slice(index, index + query.length))}</mark>${escapeHtml(raw.slice(index + query.length))}`;
+          }
+        }
+        return `<button class="caption-row" type="button" data-id="${caption.id}" data-bucket="${caption.bucket_index}"><span class="caption-time">${formatOffset(caption.offset_sec)}</span><span class="caption-text">${text}</span></button>`;
+      }).join("");
+      for (const row of transcriptList.querySelectorAll(".caption-row")) {
+        row.addEventListener("click", () => {
+          if (state.searchQuery) selectBucket(Number(row.dataset.bucket), Number(row.dataset.id));
+          else updateVodTime(Number(row.querySelector(".caption-time").textContent.split(":").reduce((sum, part) => sum * 60 + Number(part), 0)));
+        });
+      }
+    }
+
+    function renderEmpty(message) {
+      transcriptList.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+      el("captionCount").textContent = "0개";
+    }
+
+    function renderSummary(summary) {
+      el("summaryTitle").textContent = summary.headline || "기록 없음";
+      el("summaryRange").textContent = `${formatOffset(summary.window_start_sec)}–${formatOffset(summary.window_end_sec)}`;
+      el("summaryList").innerHTML = (summary.bullets || []).map((bullet) =>
+        `<li><button class="jump-button" type="button" data-offset="${bullet.offset_sec}"><span class="jump-time">${formatOffset(bullet.offset_sec)}</span><span>${escapeHtml(bullet.text)}</span></button></li>`
+      ).join("") || "<li>요약할 기록이 없습니다.</li>";
+      el("keywordList").innerHTML = (summary.keywords || []).slice(0, 10).map((keyword) =>
+        `<span class="keyword">${escapeHtml(keyword.term)} ${keyword.count}</span>`
+      ).join("");
+      bindJumpButtons(el("summaryList"));
+    }
+
+    function renderTimeline(timeline) {
+      const maxCount = Math.max(1, ...timeline.map((item) => item.caption_count));
+      el("timelineChart").innerHTML = timeline.map((item) => {
+        const width = Math.max(2, Math.round(item.caption_count / maxCount * 100));
+        const active = item.bucket_index === state.bucket ? "active" : "";
+        return `<div class="timeline-row ${active}" data-bucket="${item.bucket_index}"><span class="timeline-label">${formatOffset(item.window_start_sec).slice(0, 5)}</span><div class="timeline-track" title="${item.caption_count}개"><div class="timeline-fill" style="width:${width}%"></div></div><span class="timeline-count">${item.caption_count}</span></div>`;
+      }).join("") || '<div class="empty">타임라인 없음</div>';
+      for (const row of el("timelineChart").querySelectorAll(".timeline-row")) {
+        row.addEventListener("click", () => selectBucket(Number(row.dataset.bucket)));
+      }
+    }
+
+    function renderTopics(topics) {
+      el("topicCount").textContent = `${topics.length}개`;
+      el("topicList").innerHTML = topics.map((topic) =>
+        `<li><button class="jump-button" type="button" data-offset="${topic.offset_sec}"><span class="jump-time">${formatOffset(topic.offset_sec)}</span><span>${escapeHtml(topic.label)}</span></button></li>`
+      ).join("") || "<li>주제 전환 후보가 없습니다.</li>";
+      bindJumpButtons(el("topicList"));
+    }
+
+    function renderHighlights(highlights) {
+      el("highlightCount").textContent = `${highlights.length}개`;
+      el("highlightList").innerHTML = highlights.map((item) =>
+        `<li><button class="jump-button" type="button" data-offset="${item.offset_sec}"><span class="jump-time">${formatOffset(item.offset_sec)}</span><span>${escapeHtml(item.text)}</span></button></li>`
+      ).join("") || "<li>하이라이트 후보가 없습니다.</li>";
+      bindJumpButtons(el("highlightList"));
+    }
+
+    function bindJumpButtons(root) {
+      for (const button of root.querySelectorAll("[data-offset]")) {
+        button.addEventListener("click", () => jumpToOffset(Number(button.dataset.offset)));
+      }
+    }
+
+    async function jumpToOffset(offset) {
+      const bucket = Math.floor(offset / (state.bucketMinutes * 60));
+      await selectBucket(bucket);
+      const closest = state.captions.reduce((best, item) =>
+        !best || Math.abs(item.offset_sec - offset) < Math.abs(best.offset_sec - offset) ? item : best,
+        null
+      );
+      if (closest) focusCaption(closest.id);
+      updateVodTime(offset);
+    }
+
+    function focusCaption(id) {
+      const row = transcriptList.querySelector(`[data-id="${id}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 1200);
+    }
+
+    function renderStats(stats) {
+      el("durationText").textContent = formatOffset(stats.duration_sec || 0);
+      el("statCaptions").textContent = Number(stats.caption_count || 0).toLocaleString("ko-KR");
+      el("statRate").textContent = Number(stats.captions_per_minute || 0).toFixed(1);
+      el("statChars").textContent = Number(stats.character_count || 0).toLocaleString("ko-KR");
+    }
+
+    function fillMetadata(session) {
+      el("sessionTitle").value = session?.title || "";
+      el("vodUrl").value = session?.vod_url || "";
+      el("vodOffset").value = Math.round(Number(session?.vod_start_offset_sec || 0));
+      el("openVod").disabled = !session?.vod_url;
+      updateVodTime(state.bucket * 1800);
+    }
+
+    function updateVodTime(captionOffset) {
+      const mapped = Number(el("vodOffset").value || 0) + Number(captionOffset || 0);
+      el("vodTime").textContent = `다시보기 ${formatOffset(mapped)}`;
+    }
+
+    function formatBytes(value) {
+      const bytes = Math.max(0, Number(value) || 0);
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function updateArchiveSelection() {
+      el("downloadTranscript").disabled = !state.sessionId;
+      el("deleteSession").disabled = !state.session || !state.session.ended_at;
+    }
+
+    async function loadArchiveInfo() {
+      const payload = await api("/api/archive/info");
+      const info = payload.archive || {};
+      el("archiveSize").textContent = formatBytes(info.size_bytes);
+      el("archiveSessions").textContent = Number(info.session_count || 0).toLocaleString("ko-KR");
+      el("archiveCaptions").textContent = Number(info.caption_count || 0).toLocaleString("ko-KR");
+      el("archiveAnnotations").textContent = Number(info.annotation_count || 0).toLocaleString("ko-KR");
+      el("archiveOldest").textContent = info.oldest_session_at
+        ? new Date(info.oldest_session_at).toLocaleDateString("ko-KR")
+        : "-";
+      updateArchiveSelection();
+    }
+    async function loadSlangHistory() {
+      const payload = await api("/api/archive/slang-history?limit=12");
+      const history = payload.history || [];
+      el("slangList").innerHTML = history.map((item) =>
+        `<li><span class="slang-action">${escapeHtml(item.action)}</span><span class="slang-pair">${escapeHtml(item.source)} → ${escapeHtml(item.target)}</span></li>`
+      ).join("") || "<li>변경 이력이 없습니다.</li>";
+    }
+
+    function clearInsights() {
+      state.timeline = [];
+      renderBuckets();
+      renderSummary({ window_start_sec: 0, window_end_sec: 1800, bullets: [], keywords: [] });
+      renderTimeline([]);
+      renderTopics([]);
+      renderHighlights([]);
+      renderStats({});
+      fillMetadata(null);
+      state.session = null;
+      updateArchiveSelection();
+      el("slangList").innerHTML = "<li>변경 이력이 없습니다.</li>";
+    }
+
+    el("searchForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = el("searchInput").value.trim();
+      if (!query || !state.sessionId) return;
+      try {
+        const payload = await api(`/api/archive/search?session_id=${encodeURIComponent(state.sessionId)}&q=${encodeURIComponent(query)}&limit=500`);
+        state.searchQuery = query;
+        el("clearSearch").hidden = false;
+        renderCaptions(payload.results || [], query);
+      } catch (error) {
+        setConnection("error", "오류");
+        toast(error.message);
+      }
+    });
+
+    el("clearSearch").addEventListener("click", async () => {
+      state.searchQuery = "";
+      el("searchInput").value = "";
+      el("clearSearch").hidden = true;
+      await loadBucket();
+    });
+
+    sessionSelect.addEventListener("change", async () => {
+      state.sessionId = sessionSelect.value;
+      state.searchQuery = "";
+      el("searchInput").value = "";
+      el("clearSearch").hidden = true;
+      await loadSession(true);
+    });
+
+    el("downloadTranscript").addEventListener("click", () => {
+      if (!state.sessionId) return;
+      const link = document.createElement("a");
+      link.href = `/api/archive/export-text?session_id=${encodeURIComponent(state.sessionId)}`;
+      link.download = "";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast("선택한 방송 자막을 TXT로 저장합니다.");
+    });
+    el("backupArchive").addEventListener("click", async () => {
+      const button = el("backupArchive");
+      button.disabled = true;
+      try {
+        const payload = await api("/api/archive/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        el("archiveResult").textContent = `백업 완료: ${payload.backup_path}`;
+        await loadArchiveInfo();
+        toast("아카이브 백업이 완료됐습니다.");
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    el("pruneArchive").addEventListener("click", async () => {
+      const days = Number(el("retentionDays").value || 0);
+      if (!Number.isInteger(days) || days < 1 || days > 3650) {
+        toast("보존 기간은 1~3650일로 입력하세요.");
+        return;
+      }
+      if (!confirm(`${days}일보다 오래된 종료 방송을 아카이브에서 정리할까요? 삭제 전 백업이 생성됩니다.`)) return;
+      const button = el("pruneArchive");
+      button.disabled = true;
+      try {
+        const payload = await api("/api/archive/prune", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention_days: days }),
+        });
+        el("archiveResult").textContent = `정리 ${payload.deleted_count}개 · 백업: ${payload.backup_path}`;
+        state.sessionId = "";
+        await refresh();
+        toast(`${payload.deleted_count}개 방송 기록을 정리했습니다.`);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    el("deleteSession").addEventListener("click", async () => {
+      if (!state.session || !state.session.ended_at) return;
+      const sessionId = state.session.id;
+      const title = state.session.title || sessionId;
+      if (!confirm(`'${title}' 방송을 아카이브에서 삭제할까요? 삭제 전 백업이 생성됩니다.`)) return;
+      const button = el("deleteSession");
+      button.disabled = true;
+      try {
+        const payload = await api("/api/archive/delete-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            confirm_session_id: sessionId,
+          }),
+        });
+        el("archiveResult").textContent = `삭제 완료 · 백업: ${payload.backup_path}`;
+        state.sessionId = "";
+        state.session = null;
+        await refresh();
+        toast("선택한 방송 기록을 삭제했습니다.");
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        updateArchiveSelection();
+      }
+    });
+    el("metadataForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!state.sessionId) return;
+      try {
+        const payload = await api("/api/archive/session-meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            title: el("sessionTitle").value.trim(),
+            vod_url: el("vodUrl").value.trim(),
+            vod_start_offset_sec: Number(el("vodOffset").value || 0),
+          }),
+        });
+        state.session = payload.session;
+        fillMetadata(state.session);
+        await loadSessions(true);
+        toast("방송 정보가 저장됐습니다.");
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+
+    el("openVod").addEventListener("click", () => {
+      const url = el("vodUrl").value.trim();
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+    });
+    el("vodOffset").addEventListener("input", () => updateVodTime(state.bucket * 1800));
+
+    async function refresh() {
+      try {
+        const hadSessions = await loadSessions(true);
+        if (hadSessions) await loadSession(false);
+      } catch (error) {
+        setConnection("error", "연결 오류");
+        toast(error.message);
+      }
+    }
+
+    el("refreshButton").addEventListener("click", refresh);
+    el("liveRefresh").addEventListener("change", schedulePoll);
+
+    function schedulePoll() {
+      clearInterval(state.pollTimer);
+      if (el("liveRefresh").checked) {
+        state.pollTimer = setInterval(async () => {
+          if (document.hidden) return;
+          try {
+            const wasLatest = state.sessions[0]?.id === state.sessionId;
+            const latest = await api("/api/archive/latest");
+            if (!latest.session) {
+              await loadSessions(true);
+              return;
+            }
+            if (latest.session.id !== state.sessionId) {
+              if (wasLatest) {
+                await loadSessions(false);
+                await loadSession(true);
+              }
+              return;
+            }
+            state.session = latest.session;
+            state.timeline = latest.timeline || [];
+            renderBuckets();
+            renderTimeline(state.timeline);
+            renderStats(latest.stats || {});
+            const captionCount = Number(latest.stats?.caption_count || 0);
+            if (
+              captionCount !== state.lastCaptionCount
+              && !state.searchQuery
+            ) {
+              state.lastCaptionCount = captionCount;
+              await loadBucket();
+            }
+            if (Date.now() - state.lastAnalysisAt >= 30000) {
+              await loadSession(false);
+            }
+          } catch (error) {
+            setConnection("error", "연결 오류");
+          }
+        }, 5000);
+      }
+    }
+
+    function applyTheme(theme) {
+      document.body.dataset.theme = theme;
+      localStorage.setItem("streamer-caption-history-theme", theme);
+    }
+    el("themeButton").addEventListener("click", () => {
+      applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+    });
+
+    applyTheme(localStorage.getItem("streamer-caption-history-theme") || "light");
+    schedulePoll();
+    refresh();
+  </script>
+</body>
+</html>

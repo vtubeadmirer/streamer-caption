@@ -1,0 +1,50 @@
+{
+    "app":  {
+                "mode":  "v2_light",
+                "profile":  "recommended_4060ti_stable"
+            },
+    "whisper":  {
+                    "model":  "large-v3",
+                    "device":  "cuda",
+                    "compute_type":  "int8_float16",
+                    "language":  "ko",
+                    "task":  "transcribe",
+                    "repetition_penalty":  1.05,
+                    "no_repeat_ngram_size":  3
+                },
+    "audio":  {
+                  "sample_rate":  16000,
+                  "block_size":  1024,
+                  "input_gain":  10.0,
+                  "min_segment_peak_rms":  0.012,
+                  "silence_duration_sec":  0.7,
+                  "max_segment_sec":  10.0,
+                  "min_segment_sec":  0.4
+              },
+    "streaming":  {
+                      "chunk_seconds":  1.5,
+                      "chunk_overlap_sec":  0.1,
+                      "buffer_max_sec":  20,
+                      "pending_debounce_sec":  0.8,
+                      "pending_queue_max":  1,
+                      "pending_min_chars":  3,
+                      "pending_stale_sec":  2.0,
+                      "confirmed_hold_sec":  6.0,
+                      "worker_mode":  "process",
+                      "stt_stall_warn_sec":  8,
+                      "stt_stall_restart_sec":  20
+                  },
+    "vad":  {
+                "engine":  "silero",
+                "device":  "cpu",
+                "speech_threshold":  0.5
+            },
+    "caption":  {
+                    "just_chatting_min_line_hold_sec":  0.2
+                },
+    "archive":  {
+                    "topic_window_captions":  10,
+                    "topic_similarity_threshold":  0.15,
+                    "topic_cooldown_sec":  120
+                }
+}

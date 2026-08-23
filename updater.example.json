@@ -1,0 +1,8 @@
+{
+  "repository": "GITHUB_USERNAME/streamer-caption",
+  "channel": "stable",
+  "check_on_start": true,
+  "keep_versions": 2,
+  "allow_prerelease": false,
+  "skipped_version": null
+}

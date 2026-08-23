@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamer-caption-v2 admin</title>
+  <link rel="stylesheet" href="admin-theme.css">
+</head>
+<body class="lang-ko">
+  <header>
+    <div class="brand"><span class="brand-mark">SC</span><div><h1>Streamer Caption</h1><p class="brand-subtitle"><span class="ko-text">실시간 자막 관리자</span><span class="en-text">Live caption control</span></p></div></div>
+    <div class="row">
+      <div class="segmented language-switch"><button id="languageToggle" type="button">한/EN</button></div>
+      <div class="segmented theme-switch" aria-label="Theme">
+        <button id="themeLight" type="button" aria-pressed="true"><span class="ko-text">일반</span><span class="en-text">Light</span></button>
+        <button id="themeDark" type="button" aria-pressed="false"><span class="ko-text">다크</span><span class="en-text">Dark</span></button>
+      </div>
+      <a href="/history" class="status"><span class="ko-text">&#48169;&#49569; &#44592;&#47197;</span><span class="en-text">History</span></a>
+      <a href="/validate" class="status"><span class="ko-text">방송 검증</span><span class="en-text">Validation</span></a>
+      <button id="openCaptionPreview" type="button" class="status"><span class="ko-text">자막 미리보기</span><span class="en-text">Caption Preview</span></button>
+      <a href="#guide" class="status">사용 안내</a>
+      <div id="saveState" class="status">loading</div>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2><span class="ko-text">상태</span><span class="en-text">Status</span></h2>
+      <div class="kv">
+        <div>Mic</div><strong id="micState">-</strong>
+        <div>RMS</div><strong id="rmsText">-</strong>
+        <div>Segments</div><strong id="segmentText">-</strong>
+        <div>Captions</div><strong id="captionText">-</strong>
+        <div>STT</div><strong id="sttText">-</strong>
+        <div>Warning</div><strong id="warningText">-</strong>
+      </div>
+      <div class="meter"><div id="rmsMeter"></div></div>
+      <pre id="status">-</pre>
+      <div class="row" style="margin-top:12px">
+        <button id="refresh"><span class="ko-text">새로고침</span><span class="en-text">Refresh</span></button>
+        <button id="autoRefresh"><span class="ko-text">자동</span><span class="en-text">Auto</span></button>
+        <button id="reset" class="danger"><span class="ko-text">초기화</span><span class="en-text">Reset</span></button>
+      </div>
+    </section>
+    <div class="grid">
+      <section>
+        <h2><span class="ko-text">오디오</span><span class="en-text">Audio</span></h2>
+        <label><span class="hint" title="RTX 40/50 시리즈는 그래픽카드 자동 설정을 먼저 사용하세요. 4060 Ti급은 안정 설정, 5070 Ti급 이상은 품질 설정을 추천합니다.">하드웨어 프로필</span>
+          <select id="hardwareProfile"></select>
+        </label>
+        <button id="applyProfile" style="margin-bottom:12px">프로필 적용</button>
+        <label>
+          <span class="hint" title="Choose Microphone for the broadcaster's own voice, or PC playback to caption a broadcast playing on this computer.">
+            <span class="ko-text">&#51077;&#47141; &#49548;&#49828;</span>
+            <span class="en-text">Input source</span>
+          </span>
+          <select id="audioSource">
+            <option value="microphone">&#47560;&#51060;&#53356; / Microphone</option>
+            <option value="system">PC &#51116;&#49373;&#51020; / PC playback</option>
+          </select>
+        </label>
+        <label id="microphoneDeviceField"><span class="hint" title="마이크 장치 번호입니다. 다른 PC에서는 번호가 달라질 수 있습니다.">마이크 장치</span>
+          <select id="audioDevice"></select>
+        </label>
+        <label id="systemAudioDeviceField">
+          <span class="hint" title="Captures all sound sent to the selected Windows output device. Notifications and music on that output are included.">
+            <span class="ko-text">PC &#52636;&#47141; &#51109;&#52824;</span>
+            <span class="en-text">PC output device</span>
+          </span>
+          <select id="systemAudioDevice"></select>
+        </label>
+        <label><span class="hint" title="Energy VAD 사용 시 목소리로 판단하는 최소 RMS입니다. 높이면 덜 민감하고, 낮추면 더 민감합니다.">VAD 기준값</span>
+          <input id="vadThreshold" type="number" min="0" max="1" step="0.001">
+        </label>
+        <label><span class="hint" title="마이크 입력을 내부적으로 키우는 값입니다. 너무 높이면 잡음도 같이 커집니다.">입력 증폭</span>
+          <input id="inputGain" type="number" min="0.1" max="20" step="0.1">
+        </label>
+        <label><span class="hint" title="이 값보다 작은 소리 조각은 자막 처리하지 않습니다. 작은 말이 누락되면 낮춰보세요.">최소 음성 피크</span>
+          <input id="minPeakRms" type="number" min="0" max="1" step="0.001">
+        </label>
+        <label><span class="hint" title="Silero가 권장값입니다. Energy는 단순 소리 크기 기반입니다.">VAD 엔진</span>
+          <select id="vadEngine">
+            <option value="energy">energy</option>
+            <option value="silero">silero</option>
+          </select>
+        </label>
+        <label><span class="hint" title="Silero가 목소리라고 판단하는 기준입니다. 높이면 더 엄격해지고, 낮추면 더 잘 잡지만 오탐이 늘 수 있습니다.">Silero 음성 기준</span>
+          <input id="speechThreshold" type="number" min="0.1" max="0.95" step="0.05">
+        </label>
+        <label><span class="hint" title="음성 감지 직전 소리를 함께 넣어 첫 자음이 잘리지 않게 합니다. 권장값은 0.3초입니다.">음성 시작 여유 시간</span>
+          <input id="preRollSec" type="number" min="0" max="2" step="0.1">
+        </label>
+        <label><span class="hint" title="이 시간만큼 조용하면 한 문장을 끝났다고 판단합니다.">무음 종료 시간</span>
+          <input id="silenceSec" type="number" min="0.1" max="5" step="0.1">
+        </label>
+        <button id="saveAudio" class="primary">오디오 저장</button>
+      </section>
+      <section>
+        <h2><span class="ko-text">자막</span><span class="en-text">Caption</span></h2>
+        <label>스타일
+          <select id="captionStyle">
+            <option value="classic_outline">classic_outline</option>
+            <option value="semi_box">semi_box</option>
+            <option value="color_bar">color_bar</option>
+          </select>
+        </label>
+        <label><span class="hint" title="자막 글자 크기입니다. 30~36 정도가 일반적이고, 아주 작게는 6까지 줄일 수 있습니다. 저장하면 자막 화면에 약 1초 안에 반영됩니다.">한글 크기</span>
+          <input id="koSize" type="number" min="6" max="200" step="1">
+        </label>
+        <label><span class="hint" title="보관하며 표시할 자막 줄 수입니다. 최대 500줄까지 설정할 수 있습니다. OBS 화면에는 해상도에 들어오는 줄만 보이며, 관리자 미리보기 창에서는 스크롤할 수 있습니다.">최대 줄 수</span>
+          <input id="maxLines" type="number" min="1" max="500" step="1">
+        </label>
+        <label><span class="hint" title="한 자막 조각의 최대 글자 수입니다. 낮추면 긴 말이 더 짧게 잘립니다.">한 줄 글자 수</span>
+          <input id="maxCharsPerLine" type="number" min="10" max="80" step="1">
+        </label>
+        <label><span class="hint" title="켜면 최근 확정 자막이 줄 수만큼 계속 쌓입니다. 임시 자막은 확정 기록과 분리되어 아래에서만 바뀝니다.">저스트 채팅 모드</span>
+          <select id="justChattingMode">
+            <option value="false">끄기</option>
+            <option value="true">켜기</option>
+          </select>
+        </label>
+        <label><span class="hint" title="저스트 채팅 모드에서 새 확정 줄이 위로 올라오는 최소 간격입니다. 0은 즉시, 빠른 말은 0.5~0.9초를 권장합니다. 8줄·0.65초면 가장 위 줄이 약 5초 이상 유지됩니다. / Minimum advance interval for fast speech."><span class="ko-text">빠른 말 읽기 보호(초)</span><span class="en-text">Fast speech reading hold</span></span>
+          <input id="justChattingLineHold" type="number" min="0" max="5" step="0.05">
+        </label>
+        <button id="saveCaption" class="primary">자막 저장</button>
+      </section>
+      <section>
+        <h2><span class="ko-text">실시간 처리</span><span class="en-text">Streaming</span></h2>
+        <p class="help">
+          <span class="ko-text">임시 자막 속도와 확정 자막 유지 시간을 조절합니다. 청크·겹침·대기열 설정은 방송 재시작 후 적용됩니다.</span>
+          <span class="en-text">Controls preview latency and confirmed caption timing. Chunk, overlap, and queue settings apply after restart.</span>
+        </p>
+        <label><span class="hint" title="낮추면 임시 자막이 빨라지지만 문맥이 짧아져 오인식이 늘 수 있습니다. RTX 40/50 시리즈 권장값은 0.8~1.2초입니다."><span class="ko-text">청크 길이(초)</span><span class="en-text">Chunk seconds</span></span>
+          <input id="chunkSeconds" type="number" min="0.2" max="3" step="0.1">
+        </label>
+        <label><span class="hint" title="앞 청크의 끝부분을 다음 청크에서 다시 읽습니다. 높이면 단어 경계 누락이 줄지만 처리량이 늘어납니다. 권장값은 0.15~0.3초입니다."><span class="ko-text">청크 겹침(초)</span><span class="en-text">Chunk overlap seconds</span></span>
+          <input id="chunkOverlap" type="number" min="0" max="1" step="0.05">
+        </label>
+        <label><span class="hint" title="임시 자막 요청 사이의 최소 간격입니다. 낮추면 자주 갱신되고 높이면 화면이 덜 흔들립니다. 권장값은 0.25~0.5초입니다."><span class="ko-text">임시 자막 갱신 간격(초)</span><span class="en-text">Pending debounce seconds</span></span>
+          <input id="pendingDebounce" type="number" min="0.05" max="2" step="0.05">
+        </label>
+        <label><span class="hint" title="대기할 수 있는 임시 인식 작업 수입니다. 높이면 오래된 임시 자막이 늦게 나올 수 있습니다. 보통 1~2를 권장합니다."><span class="ko-text">임시 작업 최대 수</span><span class="en-text">Pending queue max</span></span>
+          <input id="pendingQueueMax" type="number" min="1" max="8" step="1">
+        </label>
+        <label><span class="hint" title="이 글자 수보다 짧은 임시 인식 결과는 화면에 내보내지 않습니다. 잡다한 한두 글자가 나오면 높이세요."><span class="ko-text">임시 자막 최소 글자 수</span><span class="en-text">Pending minimum characters</span></span>
+          <input id="pendingMinChars" type="number" min="1" max="12" step="1">
+        </label>
+        <label><span class="hint" title="새 결과가 없을 때 임시 자막을 지우기까지 기다리는 시간입니다. 저장 후 자막 화면에 바로 반영됩니다."><span class="ko-text">임시 자막 유지 시간(초)</span><span class="en-text">Pending stale seconds</span></span>
+          <input id="pendingStaleSec" type="number" min="0.5" max="10" step="0.5">
+        </label>
+        <label><span class="hint" title="일반 모드에서 확정 자막이 사라지기까지의 시간입니다. 저장 후 바로 반영됩니다. 저스트 채팅 모드에서는 자막 기록이 유지됩니다."><span class="ko-text">확정 자막 유지 시간(초)</span><span class="en-text">Confirmed hold seconds</span></span>
+          <input id="confirmedHoldSec" type="number" min="1" max="300" step="0.5">
+        </label>
+        <label><span class="hint" title="프로세스 모드는 음성 인식이 멈추면 STT만 다시 시작하고 확정 음성을 재전송합니다. 스레드는 이전 호환 모드입니다."><span class="ko-text">STT 실행 격리</span><span class="en-text">STT worker isolation</span></span>
+          <select id="sttWorkerMode">
+            <option value="process">프로세스 / Process (권장)</option>
+            <option value="thread">스레드 / Thread (호환)</option>
+          </select>
+        </label>
+        <label><span class="hint" title="낮추면 환각을 더 강하게 막고, 높이면 애매한 자막을 더 많이 보여줍니다. 0.72에서 시작하고 환각이 반복되면 0.67처럼 0.05씩 낮추세요. / Lower blocks more suspected hallucinations."><span class="ko-text">환각 차단 기준</span><span class="en-text">Hallucination block threshold</span></span>
+          <input id="defenseScoreThreshold" type="number" min="0.4" max="0.95" step="0.01">
+        </label>
+        <label><span class="hint" title="신뢰도가 높은 짧은 말을 음성 비율 필터에서 보호하는 최대 글자 수입니다. 인사말이 빠지면 12에서 16으로 올려보세요. / Protects short, confident speech from low voice-ratio filtering."><span class="ko-text">짧은 발화 보호 길이</span><span class="en-text">Short speech protection length</span></span>
+          <input id="shortUtteranceChars" type="number" min="1" max="40" step="1">
+        </label>
+        <label><span class="hint" title="방송 검증 보고서에서 목표로 삼는 STT P95 처리 시간입니다. 낮을수록 엄격한 경고 기준입니다. RTX 4060 Ti에서는 4초부터 시작하세요. / Validation target for STT P95 latency."><span class="ko-text">STT P95 지연 목표(초)</span><span class="en-text">STT P95 latency target</span></span>
+          <input id="latencyTargetP95" type="number" min="0.25" max="20" step="0.25">
+        </label>
+        <div class="setting-note">
+          <span class="ko-text"><b>균형 권장:</b> 청크 0.8~1.0, 겹침 0.2, 갱신 간격 0.3, 대기열 1~2, 환각 기준 0.72, 짧은 발화 12, STT 프로세스 모드</span>
+          <span class="en-text"><b>Balanced preset:</b> chunk 0.8–1.0, overlap 0.2, debounce 0.3, queue 1–2, hallucination threshold 0.72, short speech 12, process worker</span>
+        </div>
+        <button id="saveStreaming" class="primary"><span class="ko-text">실시간 처리 저장</span><span class="en-text">Save Streaming</span></button>
+      </section>
+      <section style="grid-column:1/-1">
+        <h2><span class="ko-text">유행어 / 보호 단어</span><span class="en-text">Slang / Protected Terms</span></h2>
+        <p class="help">예: 들리는 발음 후보에 <b>산도웨쭈, 샨도웨이쭈, 샹도웨쭈</b>를 넣고, 표시할 단어에 <b>샹도웨쭈</b>를 넣으면 여러 오인식 후보를 같은 자막으로 바꿉니다.</p>
+        <div class="grid">
+          <label>표시할 단어
+            <input id="slangTarget" placeholder="샹도웨쭈">
+          </label>
+          <label>들리는 발음 후보, 쉼표로 구분
+            <input id="slangSources" placeholder="샌드위치, 산도웨쭈, 샨도웨이쭈">
+          </label>
+        </div>
+        <button id="addSlangExample" type="button">아래 사전에 추가</button>
+        <div class="grid">
+          <label>발음 치환 사전, 한 줄에 하나: 들린말=표시할말
+            <textarea id="slangText" spellcheck="false" style="min-height:140px"></textarea>
+          </label>
+          <label>보호 단어, 한 줄에 하나
+            <textarea id="whitelistText" spellcheck="false" style="min-height:140px"></textarea>
+          </label>
+        </div>
+        <button id="saveSlang" class="primary">유행어 저장</button>
+      </section>
+      <section style="grid-column:1/-1">
+        <h2><span class="ko-text">방송 분석 조정</span><span class="en-text">Broadcast Analysis</span></h2>
+        <p class="help">
+          <span class="ko-text">30분 요약, 주제 전환, 하이라이트 후보의 민감도를 조절합니다. 음성 인식과 GPU 사용량에는 영향을 주지 않으며 저장 즉시 다음 조회부터 반영됩니다.</span>
+          <span class="en-text">Tune 30-minute summaries, topic transitions, and highlight candidates. These settings do not affect STT or GPU use and apply to the next analysis request.</span>
+        </p>
+        <label><span class="hint" title="균형은 기본값입니다. 전환 적게는 주제 오탐과 하이라이트 수를 줄이고, 더 많이 찾기는 후보를 넓게 잡습니다. / Balanced is the default; conservative reduces noise; discovery finds more candidates."><span class="ko-text">분석 프리셋</span><span class="en-text">Analysis preset</span></span>
+          <select id="analysisPreset">
+            <option value="balanced">균형 / Balanced</option>
+            <option value="conservative">전환 적게 / Conservative</option>
+            <option value="discovery">더 많이 찾기 / Discovery</option>
+          </select>
+        </label>
+        <button id="applyAnalysisPreset" type="button"><span class="ko-text">프리셋 값 채우기</span><span class="en-text">Fill preset values</span></button>
+        <div class="grid">
+          <label><span class="hint" title="30분 요약에 보여줄 대표 문장 수입니다. 높이면 자세하지만 비슷한 내용이 늘 수 있습니다. / Number of summary bullets per 30-minute window."><span class="ko-text">요약 문장 수</span><span class="en-text">Summary bullets</span></span>
+            <input id="summaryMaxBullets" type="number" min="1" max="10" step="1">
+          </label>
+          <label><span class="hint" title="몇 개 자막을 한 덩어리로 비교할지 정합니다. 낮으면 빠르고 민감하며, 높으면 느리지만 안정적입니다. / Captions per topic comparison window."><span class="ko-text">주제 비교 창(자막 수)</span><span class="en-text">Topic window captions</span></span>
+            <input id="topicWindowCaptions" type="number" min="2" max="100" step="1">
+          </label>
+          <label><span class="hint" title="높이면 작은 변화도 주제 전환으로 잡아 전환이 많아집니다. 낮추면 확실히 달라질 때만 잡습니다. / Higher values detect more topic changes."><span class="ko-text">주제 전환 민감도</span><span class="en-text">Topic transition sensitivity</span></span>
+            <input id="topicSimilarityThreshold" type="number" min="0" max="1" step="0.01">
+          </label>
+          <label><span class="hint" title="주제 전환을 한 번 표시한 뒤 다음 표시까지 기다리는 시간입니다. 높이면 반복 알림이 줄어듭니다. / Minimum seconds between topic changes."><span class="ko-text">주제 전환 대기(초)</span><span class="en-text">Topic cooldown seconds</span></span>
+            <input id="topicCooldownSec" type="number" min="0" max="3600" step="5">
+          </label>
+          <label><span class="hint" title="리포트와 기록 화면에 보여줄 하이라이트 후보의 최대 개수입니다. / Maximum highlight candidates."><span class="ko-text">하이라이트 후보 수</span><span class="en-text">Highlight limit</span></span>
+            <input id="highlightLimit" type="number" min="1" max="50" step="1">
+          </label>
+        </div>
+        <h3><span class="ko-text">하이라이트 신호 가중치</span><span class="en-text">Highlight signal weights</span></h3>
+        <p class="help">
+          <span class="ko-text">값이 높을수록 해당 특징이 있는 문장이 후보 위쪽에 배치됩니다. 0으로 두면 해당 신호를 사용하지 않습니다.</span>
+          <span class="en-text">Higher values rank that signal more strongly. Set a value to zero to disable that signal.</span>
+        </p>
+        <div class="grid">
+          <label><span class="hint" title="느낌표와 물음표가 있는 강한 표현의 점수입니다. / Weight for exclamation and question marks."><span class="ko-text">강한 표현</span><span class="en-text">Strong expression</span></span>
+            <input id="highlightExpressionWeight" type="number" min="0" max="3" step="0.05">
+          </label>
+          <label><span class="hint" title="ㅋㅋ, ㅎㅎ, 하하 같은 웃음 표현의 점수입니다. / Weight for laughter expressions."><span class="ko-text">웃음 표현</span><span class="en-text">Laughter</span></span>
+            <input id="highlightLaughterWeight" type="number" min="0" max="3" step="0.05">
+          </label>
+          <label><span class="hint" title="방송에서 자주 나온 핵심어를 포함한 문장의 단어당 점수입니다. / Per-keyword weight for common session topics."><span class="ko-text">핵심어 포함</span><span class="en-text">Key topic</span></span>
+            <input id="highlightKeywordWeight" type="number" min="0" max="3" step="0.05">
+          </label>
+          <label><span class="hint" title="주제 전환 시점 근처 문장의 추가 점수입니다. / Weight near detected topic changes."><span class="ko-text">주제 전환 근처</span><span class="en-text">Near topic change</span></span>
+            <input id="highlightTopicWeight" type="number" min="0" max="3" step="0.05">
+          </label>
+        </div>
+        <div class="setting-note">
+          <span class="ko-text"><b>권장 시작:</b> 요약 5, 주제 창 6, 민감도 0.22, 대기 30초, 후보 10. 결과 확인은 상단 방송 기록 또는 30분 요약을 여세요.</span>
+          <span class="en-text"><b>Recommended start:</b> summary 5, topic window 6, sensitivity 0.22, cooldown 30 seconds, highlights 10. Review results in History or 30-minute Summary.</span>
+        </div>
+        <button id="saveAnalysis" class="primary"><span class="ko-text">분석 설정 저장</span><span class="en-text">Save Analysis</span></button>
+        <a class="status" href="/history"><span class="ko-text">방송 기록에서 결과 보기</span><span class="en-text">Review in History</span></a>
+        <a class="status" href="/summary"><span class="ko-text">30분 요약 열기</span><span class="en-text">Open 30-minute Summary</span></a>
+      </section>      <section id="guide" style="grid-column:1/-1">
+        <h2><span class="ko-text">처음 사용하는 사람을 위한 설정 안내</span><span class="en-text">Beginner setup guide</span></h2>
+        <div class="guide-intro">
+          <span class="ko-text">처음에는 한 번에 여러 값을 바꾸지 마세요. 아래 순서대로 한 항목씩 바꾸고 10초 정도 말해 본 뒤 결과를 확인하면 원인을 찾기 쉽습니다.</span>
+          <span class="en-text">Change one value at a time, speak for about 10 seconds, and check the result before changing another setting.</span>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">1. 최초 설정 순서</span><span class="en-text">1. First-time setup</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>장치와 프로필:</b> START_HERE의 <b>4번 RTX 40/50 시리즈 자동 설정</b>을 먼저 실행한 뒤 실제 사용할 마이크를 선택합니다. 특정 모델명이 달라도 RTX 40/50 계열이면 이 자동 설정으로 시작하면 됩니다.</span><span class="en-text"><b>Device and profile:</b> Run START_HERE option <b>4 Auto GPU preset for RTX 40/50 Series</b> first, then select the microphone you will use. Start here even if your exact GPU model name is different.</span></li>
+            <li><span class="ko-text"><b>오디오 탭:</b> VAD 엔진은 <b>Silero</b>, 음성 기준은 <b>0.5</b>, 시작 여유 시간은 <b>0.3초</b>에서 시작합니다.</span><span class="en-text"><b>Audio tab:</b> Start with Silero, threshold 0.5, and pre-roll 0.3 seconds.</span></li>
+            <li><span class="ko-text"><b>자막 탭:</b> 일반 방송은 크기 30~36, 최대 2줄, 한 줄 22~28자로 시작합니다. 필요하면 글자 크기는 6까지, 최대 줄 수는 500까지 설정할 수 있습니다. 대화를 오래 남기려면 저스트 채팅 모드와 8~12줄부터 사용하고, 상단의 <b>자막 미리보기</b> 버튼으로 새 창에서 스크롤해 확인합니다. 낮은 지연은 <b>빠른 말 읽기 보호</b>를 0.2초로 시작하고, 위쪽 자막을 더 오래 읽으려면 0.5~0.9초로 올립니다.</span><span class="en-text"><b>Caption tab:</b> Start with size 30–36, 2 lines, and 22–28 characters. Size can be reduced to 6 and maximum lines can be raised to 500. Use Just Chatting with 8–12 lines first, then open the scrollable window with Caption Preview in the header. Start Fast speech reading hold at 0.2 seconds for low latency, or raise it to 0.5–0.9 seconds for longer reading time.</span></li>
+            <li><span class="ko-text"><b>실시간 처리 탭:</b> 청크 1.0초, 겹침 0.2초, 갱신 간격 0.3초, 대기열 2를 기준으로 둡니다.</span><span class="en-text"><b>Streaming tab:</b> Start with chunk 1.0, overlap 0.2, debounce 0.3, and queue 2.</span></li>
+            <li><span class="ko-text"><b>저장 후 재시작:</b> 오디오·청크·유행어 설정을 바꿨다면 실행 중인 자막 창을 Ctrl+C로 끄고 START_HERE의 <b>1번 방송 자막 시작</b>을 다시 실행합니다.</span><span class="en-text"><b>Restart:</b> After changing audio, chunk, or slang settings, stop the caption window with Ctrl+C and run START_HERE option <b>1 Start live captions</b> again.</span></li>
+          </ol>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">1-A. 방송을 시청하는 PC에서 자막 보기</span><span class="en-text">1-A. Caption a broadcast playing on this PC</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>입력 소스</b>를 <b>PC 재생음</b>으로 바꿉니다.</span><span class="en-text">Set <b>Input source</b> to <b>PC playback</b>.</span></li>
+            <li><span class="ko-text">방송 소리가 나오는 <b>PC 출력 장치</b>를 선택합니다. 잘 모르겠다면 Windows 기본 출력을 고릅니다.</span><span class="en-text">Choose the output device that plays the broadcast. Use the default Windows output when unsure.</span></li>
+            <li><span class="ko-text"><b>오디오 저장</b>을 누른 뒤 START_HERE의 <b>3번 시청자 PC 재생음 자막</b>을 실행합니다. 저장된 마이크 방송 설정을 바꾸지 않고 이번 실행만 PC 재생음으로 시작합니다.</span><span class="en-text">Save Audio, then run START_HERE option <b>3 Caption PC playback</b>. It uses PC playback for one run without changing the saved microphone broadcast setup.</span></li>
+            <li><span class="ko-text">방송을 재생하고 상태의 Input이 <b>system | voice</b>로 바뀌며 RMS 막대가 움직이는지 확인합니다.</span><span class="en-text">Play the broadcast and confirm that Input shows <b>system | voice</b> and the RMS meter moves.</span></li>
+          </ol>
+          <p class="help"><span class="ko-text">선택한 출력 장치로 나가는 모든 소리가 들어옵니다. 방송과 함께 알림음, 음악, 게임 소리도 자막 인식 대상이 될 수 있습니다. 특정 브라우저 한 개의 소리만 분리하는 기능은 아닙니다.</span><span class="en-text">All sound sent to the selected output is captured, including notifications, music, and games. This does not isolate one browser or app.</span></p>
+        </div>
+        <div class="guide-topic">
+          <h3><span class="ko-text">2. 증상별로 무엇을 조절해야 하나요?</span><span class="en-text">2. What should I change?</span></h3>
+          <div class="guide-table-wrap">
+            <table class="guide-table">
+              <thead>
+                <tr>
+                  <th><span class="ko-text">겪는 문제</span><span class="en-text">Problem</span></th>
+                  <th><span class="ko-text">조절 위치와 방법</span><span class="en-text">What to change</span></th>
+                  <th><span class="ko-text">주의할 점</span><span class="en-text">Trade-off</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="ko-text">말해도 자막이 전혀 안 나옴</span><span class="en-text">No captions appear</span></td>
+                  <td><span class="ko-text">왼쪽 Mic/RMS가 움직이는지 먼저 확인합니다. 움직이면 오디오 탭에서 <b>Silero 음성 기준</b>을 0.5→0.45, <b>최소 음성 피크</b>를 조금 낮춥니다.</span><span class="en-text">Check Mic/RMS first. If it moves, lower Silero threshold from 0.5 to 0.45 and slightly lower minimum peak.</span></td>
+                  <td><span class="ko-text">너무 낮추면 키보드·게임 소리도 음성으로 잡힐 수 있습니다.</span><span class="en-text">Values that are too low may detect keyboard or game audio.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">작게 말한 부분만 누락됨</span><span class="en-text">Quiet speech is missed</span></td>
+                  <td><span class="ko-text"><b>입력 증폭</b>을 0.5씩 올리거나 최소 음성 피크를 10~20% 낮춥니다. 빨간 clipping 표시가 나오면 증폭을 다시 낮춥니다.</span><span class="en-text">Increase input gain by 0.5 or lower minimum peak by 10–20%. Reduce gain if clipping turns red.</span></td>
+                  <td><span class="ko-text">증폭은 잡음도 같이 키웁니다. 가능하면 마이크 자체 입력 크기를 먼저 맞추세요.</span><span class="en-text">Gain also amplifies noise. Prefer adjusting the physical microphone level first.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">잡음이나 키보드 소리가 자막으로 나옴</span><span class="en-text">Noise becomes captions</span></td>
+                  <td><span class="ko-text">Silero 음성 기준을 0.5→0.55로 올리고 최소 음성 피크도 조금 올립니다. Energy VAD라면 VAD 기준값을 올립니다.</span><span class="en-text">Raise Silero threshold from 0.5 to 0.55 and increase minimum peak. For Energy VAD, raise the energy threshold.</span></td>
+                  <td><span class="ko-text">값을 너무 높이면 작은 목소리가 누락됩니다.</span><span class="en-text">High values can miss quiet speech.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">단어 첫부분이 자주 잘림</span><span class="en-text">Word beginnings are cut</span></td>
+                  <td><span class="ko-text">오디오 탭의 <b>음성 시작 여유 시간</b>을 0.3→0.4초로 올립니다.</span><span class="en-text">Increase pre-roll from 0.3 to 0.4 seconds.</span></td>
+                  <td><span class="ko-text">너무 높이면 문장 앞의 잡음이 함께 들어갈 수 있습니다.</span><span class="en-text">Too much pre-roll may include preceding noise.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">한 문장이 너무 길고 2줄을 넘음</span><span class="en-text">One caption is too long</span></td>
+                  <td><span class="ko-text">자막 탭의 <b>한 줄 글자 수</b>를 28→24→22 순서로 낮춥니다. 말 사이의 짧은 쉼도 문장을 나누게 하려면 <b>무음 종료 시간</b>을 0.7→0.6초로 낮춥니다.</span><span class="en-text">Lower characters per line from 28 to 24 or 22. Lower silence ending from 0.7 to 0.6 to split on shorter pauses.</span></td>
+                  <td><span class="ko-text">무음 시간을 너무 낮추면 자연스러운 한 문장이 여러 조각으로 잘립니다.</span><span class="en-text">A very short silence ending splits natural sentences too often.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">임시 자막이 너무 늦게 나옴</span><span class="en-text">Preview captions are slow</span></td>
+                  <td><span class="ko-text">실시간 처리에서 <b>청크 길이</b>를 1.0→0.8초, <b>갱신 간격</b>을 0.3→0.25초로 낮춥니다.</span><span class="en-text">Lower chunk length from 1.0 to 0.8 and debounce from 0.3 to 0.25.</span></td>
+                  <td><span class="ko-text">너무 낮추면 문맥이 부족해 글자가 자주 바뀌고 GPU 처리량이 늘어납니다.</span><span class="en-text">Lower values reduce context, cause more text changes, and increase GPU work.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">자막이 너무 빨리 사라짐</span><span class="en-text">Captions disappear too quickly</span></td>
+                  <td><span class="ko-text">실시간 처리의 <b>확정 자막 유지 시간</b>을 6→8~12초로 올립니다. 계속 남기려면 자막 탭에서 저스트 채팅 모드를 켭니다.</span><span class="en-text">Raise confirmed hold from 6 to 8–12 seconds. Enable Just Chatting to keep history.</span></td>
+                  <td><span class="ko-text">저스트 채팅 모드는 확정 자막과 임시 자막을 분리합니다. 빠른 말 읽기 보호를 0.65초로 두면 8줄의 가장 위 줄이 약 5초 이상 유지됩니다.</span><span class="en-text">Just Chatting separates confirmed and pending captions. At a 0.65-second reading hold, the top of an 8-line view remains for about five seconds or longer.</span></td>
+                </tr>
+                <tr>
+                  <td><span class="ko-text">특정 유행어가 틀리거나 숨겨짐</span><span class="en-text">A slang term is wrong or hidden</span></td>
+                  <td><span class="ko-text">유행어 탭에서 원하는 표기를 <b>표시할 단어</b>에 넣고 실제 오인식들을 발음 후보에 쉼표로 등록합니다. 반드시 보여야 할 단어는 보호 단어에도 추가합니다.</span><span class="en-text">Enter the desired spelling as the target and recognition variants as comma-separated sources. Add critical terms to protected terms.</span></td>
+                  <td><span class="ko-text">저장 후 B를 다시 시작해야 Whisper 인식 힌트에도 반영됩니다.</span><span class="en-text">Restart B after saving so Whisper receives the new prompt hints.</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">3. 유행어 등록 예시</span><span class="en-text">3. Slang example</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>표시할 단어:</b> 샹도웨쭈</span><span class="en-text"><b>Target:</b> 샹도웨쭈</span></li>
+            <li><span class="ko-text"><b>들리는 발음 후보:</b> 샌드위치, 산도웨쭈, 샨도웨이쭈, 샹도웨쭈</span><span class="en-text"><b>Variants:</b> 샌드위치, 산도웨쭈, 샨도웨이쭈, 샹도웨쭈</span></li>
+            <li><span class="ko-text"><b>사전에 추가</b>를 누른 뒤 아래 목록을 확인하고 <b>유행어 저장</b>을 누릅니다.</span><span class="en-text">Click Add to dictionary, review the entries, then click Save slang.</span></li>
+            <li><span class="ko-text">실행 중인 자막 창을 Ctrl+C로 끄고 START_HERE의 <b>1번</b>을 다시 실행합니다.</span><span class="en-text">Stop the caption window with Ctrl+C and run START_HERE option <b>1</b> again.</span></li>
+          </ol>
+          <p class="help"><span class="ko-text">현재 방식은 녹음 파일의 소리를 직접 비교하는 기능이 아니라, STT가 출력할 가능성이 있는 여러 글자 표기를 원하는 단어로 바꾸는 방식입니다.</span><span class="en-text">This maps likely STT text variants; it does not directly compare live audio with a recorded pronunciation.</span></p>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">4. 언제 재시작해야 하나요?</span><span class="en-text">4. When is restart required?</span></h3>
+          <ul class="guide-steps">
+            <li><span class="ko-text"><b>즉시 반영:</b> 자막 크기, 최대 줄 수, 저스트 채팅 모드, 빠른 말 읽기 보호, 임시·확정 자막 유지 시간</span><span class="en-text"><b>Immediate:</b> caption size, maximum lines, Just Chatting, fast speech reading hold, pending and confirmed display times</span></li>
+            <li><span class="ko-text"><b>자막 재시작 필요:</b> 마이크, VAD, 입력 증폭, 문장 분할 길이, 청크·겹침·대기열, 유행어 인식 힌트, 하드웨어 프로필</span><span class="en-text"><b>Restart captions:</b> microphone, VAD, gain, sentence splitting, chunk, overlap, queue, slang prompt, hardware profile</span></li>
+          </ul>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">5. 설정이 이상해졌을 때</span><span class="en-text">5. Recovery</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text">한 번에 바꾼 값이 많다면 왼쪽 <b>초기화</b>보다 먼저 현재 값을 메모합니다.</span><span class="en-text">Record current values before using Reset.</span></li>
+            <li><span class="ko-text">START_HERE의 <b>4번 RTX 40/50 시리즈 자동 설정</b>을 다시 실행하고, 마이크 장치를 다시 선택한 뒤 저장합니다.</span><span class="en-text">Run START_HERE option <b>4 Auto GPU preset for RTX 40/50 Series</b> again, select the microphone again, and save.</span></li>
+            <li><span class="ko-text">START_HERE의 <b>1번</b>으로 재시작한 뒤 10초 동안 평소 말투로 테스트합니다. 그래도 문제가 있으면 <b>6번 검증</b> 또는 <b>7번 분석 묶음</b>을 사용합니다.</span><span class="en-text">Restart with START_HERE option <b>1</b> and test normal speech for 10 seconds. If the issue remains, use option <b>6 Validate</b> or <b>7 Support bundle</b>.</span></li>
+          </ol>
+        </div>
+        <div class="guide-topic">
+          <h3><span class="ko-text">6. 방송 중 검증 화면을 사용하는 방법</span><span class="en-text">6. Use the validation screen during a broadcast</span></h3>
+          <div class="row" style="margin-bottom:10px">
+            <a href="/validate" class="status"><span class="ko-text">방송 검증 열기</span><span class="en-text">Open validation</span></a>
+            <a href="/history" class="status"><span class="ko-text">방송 기록 열기</span><span class="en-text">Open archive</span></a>
+            <a href="/summary" class="status" target="_blank" rel="noopener"><span class="ko-text">30분 요약 열기</span><span class="en-text">Open 30-minute summary</span></a>
+          </div>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>먼저 자막 실행:</b> START_HERE의 <b>1번 방송 자막 시작</b>을 실행한 뒤 상단의 <b>방송 검증</b>을 엽니다. 검증 화면에 `세션 없음`이 보이면 아직 자막 세션이 만들어지지 않은 상태입니다.</span><span class="en-text"><b>Start captions first:</b> Run START_HERE option <b>1 Start live captions</b>, then open Validation from the top bar. `No session` means a caption session has not been created yet.</span></li>
+            <li><span class="ko-text"><b>문제가 생긴 바로 그 순간 표시:</b> 필요하면 메모에 실제로 말한 문장이나 원하는 단어를 적고 아래 네 버튼 중 하나를 누릅니다. 현재 방송 시간, 마지막 자막, 메모가 함께 저장됩니다.</span><span class="en-text"><b>Mark the exact moment:</b> Optionally enter what was actually said or the desired word, then press one of the four buttons. The audio offset, latest caption, and note are stored together.</span></li>
+            <li><span class="ko-text"><b>최근 표시 취소:</b> 잘못 누른 경우 최근 표시 목록의 `취소`를 누릅니다. 이것은 문제 표시만 지우며 방송 자막이나 원본 로그는 지우지 않습니다.</span><span class="en-text"><b>Undo a marker:</b> Press Cancel in Recent markers. This removes only the marker, not captions or raw session logs.</span></li>
+            <li><span class="ko-text"><b>중요:</b> 검증 버튼은 설정을 자동 변경하지 않습니다. 문제 시점을 정확히 남겨 방송 종료 후 어떤 값을 조절해야 하는지 판단하기 위한 기능입니다.</span><span class="en-text"><b>Important:</b> Markers do not change settings. They preserve evidence so you can decide what to tune after the broadcast.</span></li>
+          </ol>
+          <div class="guide-table-wrap">
+            <table class="guide-table">
+              <thead>
+                <tr>
+                  <th><span class="ko-text">버튼</span><span class="en-text">Button</span></th>
+                  <th><span class="ko-text">언제 누르나요?</span><span class="en-text">When to use it</span></th>
+                  <th><span class="ko-text">메모 예시와 다음 확인</span><span class="en-text">Example note and next check</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b><span class="ko-text">환각 자막</span><span class="en-text">Hallucination</span></b></td>
+                  <td><span class="ko-text">아무 말도 하지 않았는데 자막이 나오거나, 배경음·키보드 소리가 문장으로 표시될 때 누릅니다.</span><span class="en-text">Use when a caption appears without speech or background noise becomes a sentence.</span></td>
+                  <td><span class="ko-text">예: `말하지 않음, 게임 음악만 재생 중`. 이후 VAD 기준, 최소 음성 피크, no-speech 방어를 확인합니다.</span><span class="en-text">Example: `No speech, only game music`. Review VAD, minimum voice peak, and no-speech defense.</span></td>
+                </tr>
+                <tr>
+                  <td><b><span class="ko-text">말했지만 누락</span><span class="en-text">Missed speech</span></b></td>
+                  <td><span class="ko-text">실제로 말했지만 자막이 전혀 나오지 않거나 문장의 일부가 빠졌을 때 누릅니다.</span><span class="en-text">Use when spoken audio produces no caption or part of a sentence is missing.</span></td>
+                  <td><span class="ko-text">예: `실제 발화: 안녕하세요 감사합니다, 작은 목소리`. 이후 RMS, 입력 증폭, VAD 기준, 시작 여유 시간을 확인합니다.</span><span class="en-text">Example: `Said: hello and thank you, quiet voice`. Review RMS, gain, VAD, and pre-roll.</span></td>
+                </tr>
+                <tr>
+                  <td><b><span class="ko-text">단어 오인식</span><span class="en-text">Wrong word</span></b></td>
+                  <td><span class="ko-text">자막은 나왔지만 특정 단어나 유행어가 다른 글자로 표시됐을 때 누릅니다.</span><span class="en-text">Use when a caption appears but a word or streamer phrase is transcribed incorrectly.</span></td>
+                  <td><span class="ko-text">예: `실제: 샹도웨쭈 / 자막: 산도웨이쭈`. 이후 발음 치환 사전과 보호 단어 후보로 사용합니다.</span><span class="en-text">Example: `Said: 샹도웨쭈 / Caption: 산도웨이쭈`. Use it to update slang variants and protected terms.</span></td>
+                </tr>
+                <tr>
+                  <td><b><span class="ko-text">정상 인식</span><span class="en-text">Good recognition</span></b></td>
+                  <td><span class="ko-text">비슷한 음량과 환경에서 자막이 정확하게 나온 기준 시점을 남길 때 누릅니다.</span><span class="en-text">Use as a good reference when recognition is correct under similar volume and conditions.</span></td>
+                  <td><span class="ko-text">문제 시점과 비교하면 값을 너무 공격적으로 낮추거나 높이는 것을 피할 수 있습니다.</span><span class="en-text">Compare it with issue markers to avoid tuning thresholds too aggressively.</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">7. 방송 종료 후 검증 보고서 읽는 방법</span><span class="en-text">7. Read the post-broadcast validation report</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text">가능하면 자막 창에서 Ctrl+C로 정상 종료한 뒤 START_HERE의 <b>6번 최신 방송 검증</b>을 실행합니다. `VALIDATE_LATEST_BROADCAST.bat`를 직접 실행해도 같습니다.</span><span class="en-text">Prefer stopping captions with Ctrl+C, then choose START_HERE option <b>6 Validate latest broadcast</b>. Running `VALIDATE_LATEST_BROADCAST.bat` directly does the same thing.</span></li>
+            <li><span class="ko-text">결과는 최신 `logs\방송세션` 폴더의 `validation_report.md`와 `validation_report.json`에 저장됩니다. Markdown은 사람이 읽는 요약이고 JSON은 세부 분석용입니다.</span><span class="en-text">Results are written as `validation_report.md` and `validation_report.json` in the latest session log folder. Markdown is the readable summary; JSON contains detailed metrics.</span></li>
+            <li><span class="ko-text">보고서는 첫 자막 시간, STT 평균·P50·P95·최대 지연, 메모리 증가, GPU 사용률, 엔진 오류, 복구 실패, JSONL과 SQLite 자막 일치, 사용자가 표시한 문제를 함께 검사합니다.</span><span class="en-text">The report checks first-caption time, STT average/P50/P95/max latency, memory growth, GPU use, engine errors, recovery failures, JSONL/SQLite parity, and user markers.</span></li>
+          </ol>
+          <div class="guide-table-wrap">
+            <table class="guide-table">
+              <thead>
+                <tr>
+                  <th><span class="ko-text">판정</span><span class="en-text">Verdict</span></th>
+                  <th><span class="ko-text">의미</span><span class="en-text">Meaning</span></th>
+                  <th><span class="ko-text">다음 행동</span><span class="en-text">Next action</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><b>PASS</b></td><td><span class="ko-text">자동 검사와 사용자 표시에서 즉시 확인할 문제가 없습니다.</span><span class="en-text">No immediate issue was found by automated checks or markers.</span></td><td><span class="ko-text">현재 설정을 유지하고 실제 방송 시간을 늘려 확인합니다.</span><span class="en-text">Keep the settings and validate with a longer real run.</span></td></tr>
+                <tr><td><b>REVIEW</b></td><td><span class="ko-text">환각·누락·오인식 표시가 있습니다. 프로그램 고장이라는 뜻은 아닙니다.</span><span class="en-text">User issue markers exist. This does not mean the app crashed.</span></td><td><span class="ko-text">표시 시각과 메모를 보고 VAD·유행어·입력값을 조절합니다.</span><span class="en-text">Review marker times and tune VAD, slang, or input settings.</span></td></tr>
+                <tr><td><b>WARN</b></td><td><span class="ko-text">STT 지연, 메모리 증가 또는 GPU 여유가 권장 기준을 넘었습니다.</span><span class="en-text">Latency, memory growth, or GPU headroom exceeded a recommended threshold.</span></td><td><span class="ko-text">4060 Ti 프로필, 모델·청크·대기열 설정과 장시간 로그를 확인합니다.</span><span class="en-text">Review the 4060 Ti profile, model, chunk, queue, and long-run logs.</span></td></tr>
+                <tr><td><b>FAIL</b></td><td><span class="ko-text">엔진 오류, 복구 실패 또는 JSONL과 SQLite 저장 불일치가 발견됐습니다.</span><span class="en-text">An engine error, failed recovery, or JSONL/SQLite mismatch was detected.</span></td><td><span class="ko-text">설정을 계속 바꾸기 전에 START_HERE의 <b>7번</b>으로 지원 묶음을 만들어 분석합니다.</span><span class="en-text">Before more tuning, choose START_HERE option <b>7</b> to build a support bundle for analysis.</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">7-1. 환각·누락·지연·멈춤 조정 순서</span><span class="en-text">7-1. Tune hallucination, misses, latency, and stalls</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>환각이 반복될 때:</b> 먼저 당시 자막을 /validate에서 환각으로 표시합니다. 실시간 처리의 <b>환각 차단 기준</b>을 0.72→0.67로 한 단계만 낮추고 방송을 재시작합니다. 그래도 배경음에 반응하면 오디오의 Silero 음성 기준을 0.50→0.53으로 올립니다.</span><span class="en-text"><b>Repeated hallucinations:</b> Mark the caption in /validate, lower the hallucination threshold from 0.72 to 0.67, and restart. If background audio still triggers captions, raise Silero from 0.50 to 0.53.</span></li>
+            <li><span class="ko-text"><b>안녕하세요 같은 짧은 말이 빠질 때:</b> 짧은 발화 보호 길이를 12→16으로 올립니다. 여전히 빠지면 Silero 음성 기준을 0.50→0.47로 낮추고 시작 여유 시간을 0.3→0.5초로 늘립니다. 환각 기준과 VAD를 동시에 여러 단계 바꾸지 마세요.</span><span class="en-text"><b>Short greetings are missed:</b> Raise short-speech protection from 12 to 16. If needed, lower Silero from 0.50 to 0.47 and raise pre-roll from 0.3 to 0.5 seconds. Change one step at a time.</span></li>
+            <li><span class="ko-text"><b>자막이 늦을 때:</b> 최신 검증 보고서의 STT P95와 미리보기 대기 압력을 확인합니다. P95가 목표 4초를 넘으면 청크를 0.2초 줄입니다. 교체·건너뜀 수가 기준보다 높으면 갱신 간격을 0.1초 늘리거나 임시 자막 요청을 줄입니다.</span><span class="en-text"><b>Captions are late:</b> Review STT P95 and preview pressure. If P95 exceeds 4 seconds, reduce chunk length by 0.2 seconds. If preview pressure is high, raise debounce by 0.1 seconds or reduce preview requests.</span></li>
+            <li><span class="ko-text"><b>인식이 멈출 때:</b> 프로세스 모드에서는 heartbeat가 끊기거나 작업이 제한 시간을 넘으면 STT만 재시작하고 확정 음성을 다시 처리합니다. 보고서에 <code>STT 재시작</code> 또는 <code>복구 실패</code>가 있으면 30분 테스트 후 7번 지원 묶음을 만듭니다.</span><span class="en-text"><b>Recognition stalls:</b> Process mode restarts STT when heartbeat or job limits fail and replays confirmed audio. If the report shows STT restarts or failed recovery, run a 30-minute test and build a support bundle with option 7.</span></li>
+          </ol>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">7-2. 방송 분석 조정 사용법</span><span class="en-text">7-2. Tune broadcast analysis</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>처음에는 균형:</b> 분석 탭에서 균형 프리셋을 채우고 저장합니다. 이 설정은 STT나 실시간 자막 속도를 바꾸지 않습니다.</span><span class="en-text"><b>Start balanced:</b> Fill and save the Balanced preset. Analysis settings do not change STT or live caption speed.</span></li>
+            <li><span class="ko-text"><b>요약이 너무 길면:</b> 요약 문장 수를 5에서 3~4로 낮춥니다. 중요한 내용이 빠지면 6~7로 올립니다.</span><span class="en-text"><b>Summary too long:</b> Lower bullets from 5 to 3–4. Raise to 6–7 if useful details are missing.</span></li>
+            <li><span class="ko-text"><b>주제 전환이 너무 많으면:</b> 전환 민감도를 낮추고 비교 창과 대기 시간을 올립니다. 반대로 전환을 놓치면 민감도를 올리고 창을 줄입니다.</span><span class="en-text"><b>Too many topic changes:</b> Lower sensitivity and increase window and cooldown. Reverse those changes when transitions are missed.</span></li>
+            <li><span class="ko-text"><b>하이라이트가 엉뚱하면:</b> 자주 오탐되는 신호의 가중치만 0.05~0.1씩 낮춥니다. 웃긴 장면을 더 찾으려면 웃음 표현, 전환 직후 장면을 더 찾으려면 주제 전환 근처를 올립니다.</span><span class="en-text"><b>Poor highlights:</b> Lower only the noisy signal by 0.05–0.1. Raise Laughter for funny moments or Near topic change for transition moments.</span></li>
+            <li><span class="ko-text"><b>확인:</b> 저장 후 방송 기록 또는 30분 요약을 다시 열면 캐시가 지워지고 새 설정으로 즉시 계산됩니다.</span><span class="en-text"><b>Review:</b> Reopen History or Summary after saving. Cached analysis is cleared and recalculated immediately.</span></li>
+          </ol>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">8. 방송 기록과 아카이브 관리</span><span class="en-text">8. Broadcast archive management</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text"><b>기록 보기:</b> 상단 `방송 기록`을 엽니다. 고급 메뉴가 필요하면 START_HERE의 <b>8번</b>으로 들어갈 수 있습니다. 방송 선택, 자막 검색, 30분 구간, 요약, 주제 전환, 하이라이트 후보와 다시보기 시점을 확인할 수 있습니다.</span><span class="en-text"><b>View records:</b> Open History from the top bar. Advanced tools remain under START_HERE option <b>8</b>. You can select broadcasts, search captions, inspect 30-minute windows, summaries, topic changes, highlights, and VOD offsets.</span></li>
+            <li><span class="ko-text"><b>전체 아카이브 백업:</b> 현재 SQLite 방송 기록 전체를 `reports\archive_backups` 아래 ZIP으로 저장합니다. 이 ZIP에는 자막 내용이 있으므로 외부 전달 전 개인정보를 확인하세요.</span><span class="en-text"><b>Full archive backup:</b> Saves the complete SQLite archive as a ZIP under `reports\archive_backups`. It contains caption text, so review privacy before sharing it.</span></li>
+            <li><span class="ko-text"><b>기간 정리:</b> 입력한 일수보다 오래된 `종료된 방송`만 SQLite에서 삭제합니다. 예를 들어 90은 90일보다 오래된 종료 방송을 뜻합니다. 삭제 전에 전체 백업이 자동 생성됩니다.</span><span class="en-text"><b>Retention cleanup:</b> Deletes only ended broadcasts older than the entered number of days. For example, 90 means ended sessions older than 90 days. A full backup is created first.</span></li>
+            <li><span class="ko-text"><b>선택 방송 삭제:</b> 선택한 종료 방송 한 개를 SQLite에서 삭제합니다. 실행 중인 열린 방송은 삭제할 수 없으며, 삭제 전 백업이 자동 생성됩니다.</span><span class="en-text"><b>Delete selected broadcast:</b> Deletes one selected ended session from SQLite. An open live session cannot be deleted, and a backup is created first.</span></li>
+            <li><span class="ko-text"><b>삭제 범위:</b> 기간 정리와 선택 삭제는 SQLite의 방송·자막·검증 표시를 정리합니다. `logs\방송세션`의 원본 JSONL·메모리·보고서 파일은 자동 삭제하지 않습니다.</span><span class="en-text"><b>Deletion scope:</b> Cleanup removes SQLite sessions, captions, and markers. Raw JSONL, memory, and report files under `logs\session` are retained.</span></li>
+          </ol>
+          <p class="help"><span class="ko-text">업데이트 ZIP은 `data\transcripts.sqlite3`를 포함하거나 덮어쓰지 않으므로 기존 방송 기록은 유지됩니다.</span><span class="en-text">Update ZIPs do not include or overwrite `data\transcripts.sqlite3`, so existing archive data is preserved.</span></p>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">9. 강제 종료되거나 음성 인식이 멈춘 뒤의 복구</span><span class="en-text">9. Recovery after a force stop or stalled recognition</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text">PC 종료, 창 강제 닫기 또는 Python 종료로 세션이 정상적으로 닫히지 않아도 다음 자막 실행이나 START_HERE의 <b>6번 검증</b> 때 열린 세션을 자동 점검합니다.</span><span class="en-text">After a shutdown, forced window close, or killed Python process, the next caption run or START_HERE option <b>6</b> validation checks orphaned open sessions.</span></li>
+            <li><span class="ko-text">기록된 프로세스가 아직 살아 있으면 절대 건드리지 않습니다. 프로세스가 종료된 세션만 마지막 자막 시각으로 닫고 `unclean_shutdown_recovered` 복구 표시를 남깁니다.</span><span class="en-text">A session whose process is still alive is never touched. Only dead-process sessions are closed at the last caption time and marked `unclean_shutdown_recovered`.</span></li>
+            <li><span class="ko-text">로그 폴더가 남아 있으면 방송 보고서도 다시 만듭니다. 다만 강제 종료 직전에 처리 중이던 음성 자체를 복원하는 기능은 아니며, 드롭된 작업 수는 검증 보고서에서 확인합니다.</span><span class="en-text">If the log folder exists, the broadcast report is regenerated. Audio still being processed at the instant of termination cannot be restored; dropped jobs are reported instead.</span></li>
+            <li><span class="ko-text">음성 인식이 반복해서 멈추면 값을 여러 개 바꾸지 말고 START_HERE의 <b>1번</b>으로 한 번 재시작한 뒤 <b>6번 검증</b>을 실행합니다. FAIL 또는 반복 재시작이 보이면 <b>7번 지원 묶음</b>을 만듭니다.</span><span class="en-text">If recognition repeatedly stalls, restart once with START_HERE option <b>1</b>, then run option <b>6</b>. Build an option <b>7</b> support bundle when FAIL or repeated restarts appear.</span></li>
+          </ol>
+        </div>
+
+        <div class="guide-topic">
+          <h3><span class="ko-text">10. Codex에 분석 자료를 전달하는 가장 좋은 순서</span><span class="en-text">10. Best workflow for sending diagnostics to Codex</span></h3>
+          <ol class="guide-steps">
+            <li><span class="ko-text">실제 방송 또는 10~30분 테스트 중 `/validate`에서 문제 시점을 표시합니다. 오인식은 `실제 발화 / 나온 자막`, 누락은 실제 발화와 목소리 크기, 환각은 당시 배경음을 메모합니다.</span><span class="en-text">During a real or 10–30 minute run, mark issues in `/validate`. Note `actual speech / caption` for wrong words, the actual phrase and volume for misses, and background sound for hallucinations.</span></li>
+            <li><span class="ko-text">자막을 종료하고 START_HERE의 <b>6번</b>으로 검증 보고서를 만듭니다.</span><span class="en-text">Stop captions and choose START_HERE option <b>6</b> to build the validation report.</span></li>
+            <li><span class="ko-text">START_HERE의 <b>7번</b>으로 `streamer_caption_v2_support_*.zip`을 만듭니다. 최신 설정, 보고서, 세션 로그가 들어가며 원본 음성과 SQLite 전체 DB는 기본적으로 포함하지 않습니다.</span><span class="en-text">Choose START_HERE option <b>7</b> to create `streamer_caption_v2_support_*.zip`. It includes current settings, reports, and session logs, but not raw audio or the complete SQLite database by default.</span></li>
+            <li><span class="ko-text">특정 발음 자체를 들어야 하는 문제라면 그때만 짧은 녹음 파일을 별도로 전달합니다. 검증 표시가 있는 로그와 녹음을 함께 주면 원인 구분이 가장 정확합니다.</span><span class="en-text">Provide a short recording separately only when the pronunciation itself must be heard. A marked log plus audio gives the most reliable diagnosis.</span></li>
+          </ol>
+          <div class="guide-table-wrap">
+            <table class="guide-table">
+              <thead><tr><th><span class="ko-text">메뉴</span><span class="en-text">Menu</span></th><th><span class="ko-text">용도</span><span class="en-text">Purpose</span></th><th><span class="ko-text">언제 사용?</span><span class="en-text">When to use</span></th></tr></thead>
+              <tbody>
+                <tr><td><b>1</b></td><td><span class="ko-text">실시간 자막 실행</span><span class="en-text">Run live captions</span></td><td><span class="ko-text">방송 시작</span><span class="en-text">Start of broadcast</span></td></tr>
+                <tr><td><b>2</b></td><td><span class="ko-text">관리자 화면 열기</span><span class="en-text">Open admin page</span></td><td><span class="ko-text">설정 조정</span><span class="en-text">Tune settings</span></td></tr>
+                <tr><td><b>3</b></td><td><span class="ko-text">시청자 PC 재생음 자막</span><span class="en-text">Caption PC playback</span></td><td><span class="ko-text">방송을 듣는 PC에서 자막 보기</span><span class="en-text">Viewer-side captions</span></td></tr>
+                <tr><td><b>4</b></td><td><span class="ko-text">RTX 40/50 시리즈 자동 설정</span><span class="en-text">Auto GPU preset for RTX 40/50 Series</span></td><td><span class="ko-text">처음 설치 또는 GPU 변경</span><span class="en-text">First install or GPU change</span></td></tr>
+                <tr><td><b>6</b></td><td><span class="ko-text">최신 방송 검증</span><span class="en-text">Validate latest broadcast</span></td><td><span class="ko-text">방송 종료 후</span><span class="en-text">After the broadcast</span></td></tr>
+                <tr><td><b>7</b></td><td><span class="ko-text">Codex 분석용 지원 묶음</span><span class="en-text">Build support bundle for Codex</span></td><td><span class="ko-text">오류·멈춤·튜닝 요청</span><span class="en-text">Errors, stalls, tuning</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section style="grid-column:1/-1">
+        <h2>Raw Config</h2>
+        <textarea id="rawConfig" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button id="saveRaw" class="primary">Save Raw JSON</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const state = document.getElementById("saveState");
+    const statusEl = document.getElementById("status");
+    const rawConfig = document.getElementById("rawConfig");
+    let config = null;
+    let latestStatus = null;
+    let slangState = { slang: {}, whitelist: [] };
+    let autoTimer = null;
+    const previewOnly = new URLSearchParams(location.search).get("preview") === "1";
+
+    function applyTheme(theme) {
+      const normalized = theme === "dark" ? "dark" : "light";
+      document.body.dataset.theme = normalized;
+      document.getElementById("themeLight").setAttribute("aria-pressed", String(normalized === "light"));
+      document.getElementById("themeDark").setAttribute("aria-pressed", String(normalized === "dark"));
+      localStorage.setItem("streamerCaptionAdminTheme", normalized);
+    }
+
+    function activateAdminTab(name) {
+      document.querySelectorAll(".admin-tabs [data-tab]").forEach(tab => {
+        tab.classList.toggle("active", tab.dataset.tab === name);
+      });
+      document.querySelectorAll("body > main > .grid > section[data-panel]").forEach(panel => {
+        panel.hidden = panel.dataset.panel !== name;
+      });
+      localStorage.setItem("streamerCaptionAdminTab", name);
+    }
+
+    function setupAdminTabs() {
+      const workspace = document.querySelector("body > main > .grid");
+      const sections = [...workspace.children].filter(element => element.tagName === "SECTION");
+      const tabs = [
+        ["audio", "오디오", "Audio"],
+        ["caption", "자막", "Caption"],
+        ["streaming", "실시간 처리", "Streaming"],
+        ["slang", "유행어", "Slang"],
+        ["analysis", "분석", "Analysis"],
+        ["guide", "안내", "Guide"],
+        ["advanced", "고급", "Advanced"],
+      ];
+      const nav = document.createElement("nav");
+      nav.className = "tabs admin-tabs";
+      nav.setAttribute("aria-label", "Settings");
+      tabs.forEach(([name, ko, en], index) => {
+        const section = sections[index];
+        if (!section) return;
+        section.dataset.panel = name;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tab";
+        button.dataset.tab = name;
+        button.innerHTML = `<span class="ko-text">${ko}</span><span class="en-text">${en}</span>`;
+        button.addEventListener("click", () => activateAdminTab(name));
+        nav.append(button);
+      });
+      workspace.prepend(nav);
+      const saved = localStorage.getItem("streamerCaptionAdminTab");
+      activateAdminTab(tabs.some(([name]) => name === saved) ? saved : "audio");
+
+      const guideLink = document.querySelector('a[href="#guide"]');
+      if (guideLink) {
+        guideLink.addEventListener("click", event => {
+          event.preventDefault();
+          activateAdminTab("guide");
+        });
+      }
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    }
+
+    async function loadAll() {
+      state.textContent = "loading";
+      const [cfg, status, devices, profiles, slang] = await Promise.all([
+        api("/api/config"),
+        api("/api/status"),
+        api("/api/devices").catch(error => ({ error: String(error), devices: [], system_devices: [] })),
+        api("/api/profiles").catch(error => ({ error: String(error), profiles: [] })),
+        api("/api/slang").catch(error => ({ error: String(error), slang: {}, whitelist: [] })),
+      ]);
+      config = cfg;
+      slangState = slang;
+      rawConfig.value = JSON.stringify(cfg, null, 2);
+      statusEl.textContent = JSON.stringify(status, null, 2);
+      bindStatus(status);
+      bindConfig(cfg, devices.devices || [], devices.system_devices || []);
+      bindProfiles(cfg, profiles.profiles || []);
+      bindSlang(slang);
+      state.textContent = previewOnly ? "화면 미리보기" : "ready";
+    }
+
+    function bindSlang(slang) {
+      const entries = slang.slang || {};
+      document.getElementById("slangText").value = Object.entries(entries)
+        .map(([source, target]) => `${source}=${target}`)
+        .join("\n");
+      document.getElementById("whitelistText").value = (slang.whitelist || []).join("\n");
+    }
+
+    function parseSlangText(value) {
+      const entries = {};
+      for (const rawLine of value.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const index = line.indexOf("=");
+        if (index <= 0) continue;
+        const source = line.slice(0, index).trim();
+        const target = line.slice(index + 1).trim();
+        if (source && target) entries[source] = target;
+      }
+      return entries;
+    }
+
+    function parseListText(value) {
+      return value.split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith("#"));
+    }
+
+    function bindProfiles(cfg, profiles) {
+      const hardwareProfile = document.getElementById("hardwareProfile");
+      hardwareProfile.innerHTML = "";
+      for (const profile of profiles) {
+        const option = document.createElement("option");
+        option.value = profile;
+        option.textContent = profile;
+        hardwareProfile.append(option);
+      }
+      hardwareProfile.value = cfg.app.profile || "custom";
+    }
+
+    function uiText(ko, en) {
+      return document.body.classList.contains("lang-en") ? en : ko;
+    }
+
+    function sttStateText(value) {
+      const labels = {
+        ready: ["준비", "ready"],
+        busy: ["처리 중", "busy"],
+        starting: ["시작 중", "starting"],
+        restart_requested: ["재시작 요청", "restart requested"],
+        restarting: ["재시작 중", "restarting"],
+        failed: ["실패", "failed"],
+        stopped: ["중지", "stopped"],
+      };
+      const label = labels[value];
+      return label ? uiText(label[0], label[1]) : value;
+    }
+
+    function bindStatus(status) {
+      latestStatus = status;
+      const audio = status.last_audio || {};
+      const rms = Number(audio.rms || 0);
+      const threshold = Number(audio.threshold || 0);
+      const ratio = threshold > 0
+        ? Math.min(100, Math.round((rms / threshold) * 100))
+        : 0;
+      const clipFraction = Number(audio.clip_fraction || 0);
+      const source = audio.audio_source || config?.audio?.source || "microphone";
+      const restarts = Number(
+        audio.source_restarts ?? status.audio_restart_count ?? 0
+      );
+      const meter = document.getElementById("rmsMeter");
+      meter.style.width = ratio + "%";
+      meter.style.background = clipFraction >= 0.01
+        ? "#d64545"
+        : (audio.is_voice ? "#1f9d55" : "var(--accent)");
+      const sourceLabel = source === "system"
+        ? uiText("PC 재생음", "PC playback")
+        : uiText("마이크", "Microphone");
+      const inputState = clipFraction >= 0.01
+        ? uiText("소리 찢어짐", "clipping")
+        : (audio.is_voice
+          ? uiText("음성 감지", "voice")
+          : uiText("조용함", "quiet"));
+      const inputParts = [sourceLabel, inputState];
+      if (restarts) {
+        inputParts.push(
+          uiText("입력 재시작 ", "input restarts ") + restarts
+        );
+      }
+      document.getElementById("micState").textContent =
+        inputParts.join(" | ");
+      document.getElementById("rmsText").textContent =
+        rms.toFixed(5) + " / " + threshold.toFixed(5)
+        + " | " + uiText("클리핑 ", "clip ")
+        + (clipFraction * 100).toFixed(1) + "%";
+      document.getElementById("segmentText").textContent =
+        (status.segment_count || 0) + uiText("개 처리, ", " processed, ")
+        + (status.discarded_segment_count || 0)
+        + uiText("개 제외", " discarded");
+      document.getElementById("captionText").textContent =
+        (status.caption_count || 0) + uiText("개 표시, ", " shown, ")
+        + (status.pending_caption_count || 0)
+        + uiText("개 임시, ", " pending, ")
+        + (status.hidden_caption_count || 0)
+        + uiText("개 차단", " hidden");
+      const stt = status.last_stt || {};
+      const sttParts = [];
+      if (stt.active_job_type) {
+        sttParts.push(
+          uiText("처리 중 ", "active ") + stt.active_job_type + " "
+          + Number(stt.active_elapsed_sec || 0).toFixed(1)
+          + uiText("초", "s")
+        );
+      }
+      if (stt.job_type) {
+        sttParts.push(
+          uiText("최근 ", "last ") + stt.job_type + " "
+          + Number(stt.elapsed_sec || 0).toFixed(2)
+          + uiText("초", "s")
+        );
+      } else {
+        sttParts.push(uiText("대기", "idle"));
+      }
+      const modeLabel = stt.worker_mode === "process"
+        ? uiText("프로세스", "process")
+        : uiText("스레드", "thread");
+      sttParts.unshift(
+        modeLabel
+        + (stt.process_state
+          ? " " + sttStateText(stt.process_state)
+          : "")
+      );
+      sttParts.push(
+        uiText("교체된 임시 ", "superseded ")
+        + (stt.superseded_pending_jobs || 0)
+        + uiText(", 건너뛴 임시 ", ", skipped ")
+        + (stt.skipped_pending_jobs || 0)
+      );
+      if (stt.worker_mode === "process") {
+        sttParts.push(
+          uiText("STT 재시작 ", "restarts ")
+          + (stt.process_restarts || 0)
+          + uiText(", 복구 자막 ", ", recovered ")
+          + (stt.recovered_confirmed_jobs || 0)
+        );
+        const heartbeatAge = stt.child_heartbeat_age_sec;
+        if (
+          heartbeatAge !== null
+          && heartbeatAge !== undefined
+          && Number.isFinite(Number(heartbeatAge))
+        ) {
+          sttParts.push(
+            "heartbeat "
+            + Number(heartbeatAge).toFixed(1)
+            + uiText("초 전", "s ago")
+          );
+        }
+      }
+      if (stt.committed_confirmed_jobs) {
+        sttParts.push(
+          uiText("확정 저장 ", "committed ")
+          + stt.committed_confirmed_jobs
+          + uiText(", 중복 차단 ", ", duplicate blocked ")
+          + (stt.duplicate_confirmed_results || 0)
+        );
+      }
+      document.getElementById("sttText").textContent =
+        sttParts.join(" | ");
+      document.getElementById("warningText").textContent =
+        status.pipeline_warning || audio.source_last_error || "-";
+      if (previewOnly) {
+        document.getElementById("micState").textContent =
+          uiText("화면 미리보기", "UI preview");
+      }
+    }
+    function updateAudioSourceVisibility() {
+      const source = document.getElementById("audioSource").value;
+      document.getElementById("microphoneDeviceField").hidden =
+        source !== "microphone";
+      document.getElementById("systemAudioDeviceField").hidden =
+        source !== "system";
+    }
+    function bindConfig(cfg, devices, systemDevices) {
+      const audioSource = document.getElementById("audioSource");
+      audioSource.value = cfg.audio.source || "microphone";
+
+      const audioDevice = document.getElementById("audioDevice");
+      audioDevice.innerHTML = "";
+      for (const device of devices) {
+        const option = document.createElement("option");
+        option.value = device.index;
+        option.textContent = device.index + ": " + device.name;
+        audioDevice.append(option);
+      }
+      if (
+        cfg.audio.device !== null
+        && cfg.audio.device !== undefined
+        && ![...audioDevice.options].some(
+          option => option.value === String(cfg.audio.device)
+        )
+      ) {
+        const configured = document.createElement("option");
+        configured.value = cfg.audio.device;
+        configured.textContent =
+          String(cfg.audio.device) + ": configured device";
+        audioDevice.append(configured);
+      }
+      audioDevice.value = cfg.audio.device;
+
+      const systemAudioDevice = document.getElementById("systemAudioDevice");
+      systemAudioDevice.innerHTML = "";
+      const defaultOutput = document.createElement("option");
+      defaultOutput.value = "";
+      defaultOutput.textContent =
+        "Default Windows output / Windows 기본 출력";
+      systemAudioDevice.append(defaultOutput);
+      for (const device of systemDevices) {
+        const option = document.createElement("option");
+        option.value = device.id;
+        option.textContent =
+          device.name + (device.is_default ? " [default]" : "");
+        systemAudioDevice.append(option);
+      }
+      if (
+        cfg.audio.system_device
+        && ![...systemAudioDevice.options].some(
+          option => option.value === String(cfg.audio.system_device)
+        )
+      ) {
+        const configured = document.createElement("option");
+        configured.value = cfg.audio.system_device;
+        configured.textContent =
+          String(cfg.audio.system_device) + " [configured]";
+        systemAudioDevice.append(configured);
+      }
+      systemAudioDevice.value = cfg.audio.system_device || "";
+      updateAudioSourceVisibility();
+      document.getElementById("vadThreshold").value = cfg.audio.vad_energy_threshold;
+      document.getElementById("inputGain").value = cfg.audio.input_gain ?? 1.0;
+      document.getElementById("minPeakRms").value = cfg.audio.min_segment_peak_rms ?? 0.0;
+      document.getElementById("preRollSec").value = cfg.audio.pre_roll_sec ?? 0.3;
+      document.getElementById("vadEngine").value = cfg.vad.engine ?? "energy";
+      document.getElementById("speechThreshold").value = cfg.vad.speech_threshold ?? 0.5;
+      document.getElementById("silenceSec").value = cfg.audio.silence_duration_sec;
+      document.getElementById("captionStyle").value = cfg.caption.style;
+      document.getElementById("koSize").value = cfg.caption.ko_size;
+      document.getElementById("maxLines").value = cfg.caption.max_lines;
+      document.getElementById("maxCharsPerLine").value = cfg.caption.max_chars_per_line ?? 28;
+      document.getElementById("justChattingMode").value = String(Boolean(cfg.caption.just_chatting_mode));
+      document.getElementById("justChattingLineHold").value =
+        cfg.caption.just_chatting_min_line_hold_sec ?? 0.65;
+      document.getElementById("chunkSeconds").value = cfg.streaming.chunk_seconds;
+      document.getElementById("chunkOverlap").value = cfg.streaming.chunk_overlap_sec;
+      document.getElementById("pendingDebounce").value = cfg.streaming.pending_debounce_sec;
+      document.getElementById("pendingQueueMax").value = cfg.streaming.pending_queue_max ?? 2;
+      document.getElementById("pendingMinChars").value = cfg.streaming.pending_min_chars ?? 2;
+      document.getElementById("pendingStaleSec").value = cfg.streaming.pending_stale_sec ?? 3.0;
+      document.getElementById("confirmedHoldSec").value = cfg.streaming.confirmed_hold_sec ?? 6.0;
+      document.getElementById("sttWorkerMode").value = cfg.streaming.worker_mode ?? "process";
+      document.getElementById("defenseScoreThreshold").value =
+        cfg.defense.hallucination_score_threshold ?? 0.72;
+      document.getElementById("shortUtteranceChars").value =
+        cfg.defense.short_utterance_max_chars ?? 12;
+      document.getElementById("latencyTargetP95").value =
+        cfg.streaming.stt_latency_target_p95_sec ?? 4.0;
+      const archive = cfg.archive || {};
+      const highlightWeights = archive.highlight_weights || {};
+      document.getElementById("summaryMaxBullets").value =
+        archive.summary_max_bullets ?? 5;
+      document.getElementById("topicWindowCaptions").value =
+        archive.topic_window_captions ?? 6;
+      document.getElementById("topicSimilarityThreshold").value =
+        archive.topic_similarity_threshold ?? 0.22;
+      document.getElementById("topicCooldownSec").value =
+        archive.topic_cooldown_sec ?? 30;
+      document.getElementById("highlightLimit").value =
+        archive.highlight_limit ?? 10;
+      document.getElementById("highlightExpressionWeight").value =
+        highlightWeights.strong_expression ?? 0.45;
+      document.getElementById("highlightLaughterWeight").value =
+        highlightWeights.laughter ?? 0.65;
+      document.getElementById("highlightKeywordWeight").value =
+        highlightWeights.keyword ?? 0.18;
+      document.getElementById("highlightTopicWeight").value =
+        highlightWeights.topic_change ?? 0.4;
+    }
+
+    const analysisPresets = {
+      balanced: {
+        summaryMaxBullets: 5,
+        topicWindowCaptions: 6,
+        topicSimilarityThreshold: 0.22,
+        topicCooldownSec: 30,
+        highlightLimit: 10,
+        highlightExpressionWeight: 0.45,
+        highlightLaughterWeight: 0.65,
+        highlightKeywordWeight: 0.18,
+        highlightTopicWeight: 0.4,
+      },
+      conservative: {
+        summaryMaxBullets: 4,
+        topicWindowCaptions: 10,
+        topicSimilarityThreshold: 0.15,
+        topicCooldownSec: 120,
+        highlightLimit: 8,
+        highlightExpressionWeight: 0.35,
+        highlightLaughterWeight: 0.5,
+        highlightKeywordWeight: 0.14,
+        highlightTopicWeight: 0.25,
+      },
+      discovery: {
+        summaryMaxBullets: 7,
+        topicWindowCaptions: 4,
+        topicSimilarityThreshold: 0.35,
+        topicCooldownSec: 20,
+        highlightLimit: 18,
+        highlightExpressionWeight: 0.6,
+        highlightLaughterWeight: 0.85,
+        highlightKeywordWeight: 0.25,
+        highlightTopicWeight: 0.65,
+      },
+    };
+
+    function fillAnalysisPreset(name) {
+      const values = analysisPresets[name] || analysisPresets.balanced;
+      for (const [id, value] of Object.entries(values)) {
+        document.getElementById(id).value = value;
+      }
+    }
+
+    async function savePatch(patch) {
+      state.textContent = "saving";
+      config = await api("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      rawConfig.value = JSON.stringify(config, null, 2);
+      state.textContent = "saved";
+    }
+
+    async function refreshStatus() {
+      const status = await api("/api/status");
+      statusEl.textContent = JSON.stringify(status, null, 2);
+      bindStatus(status);
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadAll);
+    document.getElementById("openCaptionPreview").addEventListener("click", () => {
+      const previewWindow = window.open(
+        "/caption?preview=1",
+        "streamerCaptionPreview",
+        "popup=yes,width=1280,height=720,resizable=yes,scrollbars=yes"
+      );
+      if (previewWindow) {
+        previewWindow.focus();
+      } else {
+        state.textContent = "팝업이 차단되었습니다. 브라우저에서 이 사이트의 팝업을 허용하세요";
+      }
+    });
+    document.getElementById("autoRefresh").addEventListener("click", () => {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        document.getElementById("autoRefresh").textContent = "Auto";
+      } else {
+        autoTimer = setInterval(() => {
+          refreshStatus().catch(error => {
+            state.textContent = String(error);
+          });
+        }, 1000);
+        document.getElementById("autoRefresh").textContent = "Stop";
+      }
+    });
+    document.getElementById("themeLight").addEventListener("click", () => applyTheme("light"));
+    document.getElementById("themeDark").addEventListener("click", () => applyTheme("dark"));
+    document.getElementById("languageToggle").addEventListener("click", () => {
+      const useEnglish = !document.body.classList.contains("lang-en");
+      document.body.classList.toggle("lang-en", useEnglish);
+      document.body.classList.toggle("lang-ko", !useEnglish);
+      document.documentElement.lang = useEnglish ? "en" : "ko";
+      localStorage.setItem("streamerCaptionAdminLanguage", useEnglish ? "en" : "ko");
+      if (latestStatus) bindStatus(latestStatus);
+    });
+    document.getElementById("reset").addEventListener("click", async () => {
+      state.textContent = "resetting";
+      config = await api("/api/reset", { method: "POST" });
+      await loadAll();
+    });
+    document.getElementById("audioSource").addEventListener(
+      "change",
+      updateAudioSourceVisibility,
+    );
+    document.getElementById("saveAudio").addEventListener("click", async () => {
+      const audioPatch = {
+        source: document.getElementById("audioSource").value,
+        system_device: document.getElementById("systemAudioDevice").value,
+        vad_energy_threshold: Number(document.getElementById("vadThreshold").value),
+        input_gain: Number(document.getElementById("inputGain").value),
+        min_segment_peak_rms: Number(document.getElementById("minPeakRms").value),
+        pre_roll_sec: Number(document.getElementById("preRollSec").value),
+        silence_duration_sec: Number(document.getElementById("silenceSec").value),
+      };
+      const microphoneDevice = document.getElementById("audioDevice").value;
+      if (microphoneDevice !== "") {
+        audioPatch.device = Number(microphoneDevice);
+      }
+      await savePatch({
+        audio: audioPatch,
+        vad: {
+          engine: document.getElementById("vadEngine").value,
+          speech_threshold: Number(document.getElementById("speechThreshold").value),
+        }
+      });
+      state.textContent = "saved | restart B to apply the input source";
+    });
+    document.getElementById("applyProfile").addEventListener("click", async () => {
+      state.textContent = "applying";
+      config = await api("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: document.getElementById("hardwareProfile").value,
+          keep_audio_tuning: true,
+        }),
+      });
+      await loadAll();
+      state.textContent = "프로필 적용됨 · 방송을 다시 시작하세요";
+    });
+    document.getElementById("saveCaption").addEventListener("click", async () => {
+      await savePatch({
+        caption: {
+          style: document.getElementById("captionStyle").value,
+          ko_size: Number(document.getElementById("koSize").value),
+          max_lines: Number(document.getElementById("maxLines").value),
+          max_chars_per_line: Number(document.getElementById("maxCharsPerLine").value),
+          just_chatting_mode: document.getElementById("justChattingMode").value === "true",
+          just_chatting_min_line_hold_sec: Number(document.getElementById("justChattingLineHold").value),
+        }
+      });
+      state.textContent = "화면 설정 즉시 적용 · 문장 길이는 방송 재시작 후 적용";
+    });
+    document.getElementById("saveStreaming").addEventListener("click", async () => {
+      await savePatch({
+        streaming: {
+          chunk_seconds: Number(document.getElementById("chunkSeconds").value),
+          chunk_overlap_sec: Number(document.getElementById("chunkOverlap").value),
+          pending_debounce_sec: Number(document.getElementById("pendingDebounce").value),
+          pending_queue_max: Number(document.getElementById("pendingQueueMax").value),
+          pending_min_chars: Number(document.getElementById("pendingMinChars").value),
+          pending_stale_sec: Number(document.getElementById("pendingStaleSec").value),
+          confirmed_hold_sec: Number(document.getElementById("confirmedHoldSec").value),
+          worker_mode: document.getElementById("sttWorkerMode").value,
+          stt_latency_target_p95_sec: Number(document.getElementById("latencyTargetP95").value),
+        },
+        defense: {
+          hallucination_score_threshold: Number(document.getElementById("defenseScoreThreshold").value),
+          short_utterance_max_chars: Number(document.getElementById("shortUtteranceChars").value),
+        }
+      });
+      state.textContent = "표시 시간 즉시 적용 · 인식 설정은 방송 재시작 후 적용";
+    });
+    document.getElementById("applyAnalysisPreset").addEventListener("click", () => {
+      fillAnalysisPreset(document.getElementById("analysisPreset").value);
+      state.textContent = "분석 프리셋 값을 채웠습니다. 저장 버튼을 누르세요";
+    });
+    document.getElementById("saveAnalysis").addEventListener("click", async () => {
+      await savePatch({
+        archive: {
+          summary_max_bullets: Number(document.getElementById("summaryMaxBullets").value),
+          topic_window_captions: Number(document.getElementById("topicWindowCaptions").value),
+          topic_similarity_threshold: Number(document.getElementById("topicSimilarityThreshold").value),
+          topic_cooldown_sec: Number(document.getElementById("topicCooldownSec").value),
+          highlight_limit: Number(document.getElementById("highlightLimit").value),
+          highlight_weights: {
+            strong_expression: Number(document.getElementById("highlightExpressionWeight").value),
+            laughter: Number(document.getElementById("highlightLaughterWeight").value),
+            keyword: Number(document.getElementById("highlightKeywordWeight").value),
+            topic_change: Number(document.getElementById("highlightTopicWeight").value),
+          },
+        },
+      });
+      state.textContent = "분석 설정 저장됨 · 기록과 요약을 다시 열면 즉시 반영";
+    });
+    document.getElementById("addSlangExample").addEventListener("click", () => {
+      const target = document.getElementById("slangTarget").value.trim();
+      const sources = document.getElementById("slangSources").value
+        .split(",")
+        .map(item => item.trim())
+        .filter(Boolean);
+      if (!target || sources.length === 0) {
+        state.textContent = "표시할 단어와 발음 후보를 입력하세요";
+        return;
+      }
+      const slangText = document.getElementById("slangText");
+      const whitelistText = document.getElementById("whitelistText");
+      const existing = slangText.value.trim();
+      const additions = sources.map(source => `${source}=${target}`).join("\n");
+      slangText.value = existing ? `${existing}\n${additions}` : additions;
+      const protectedTerms = new Set(parseListText(whitelistText.value));
+      protectedTerms.add(target);
+      whitelistText.value = [...protectedTerms].join("\n");
+      state.textContent = "추가됨. 유행어 저장을 누르세요";
+    });
+    document.getElementById("saveSlang").addEventListener("click", async () => {
+      state.textContent = "saving slang";
+      slangState = await api("/api/slang", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slang: parseSlangText(document.getElementById("slangText").value),
+          whitelist: parseListText(document.getElementById("whitelistText").value),
+        }),
+      });
+      bindSlang(slangState);
+      state.textContent = "유행어 저장됨 · 방송을 다시 시작하면 인식 힌트에 적용됩니다";
+    });
+    document.getElementById("saveRaw").addEventListener("click", () => savePatch(JSON.parse(rawConfig.value)));
+
+    const requestedTheme = new URLSearchParams(location.search).get("theme");
+    applyTheme(requestedTheme || localStorage.getItem("streamerCaptionAdminTheme") || "light");
+    if (localStorage.getItem("streamerCaptionAdminLanguage") === "en") {
+      document.body.classList.remove("lang-ko");
+      document.body.classList.add("lang-en");
+      document.documentElement.lang = "en";
+    }
+    setupAdminTabs();
+
+    loadAll().catch(error => {
+      state.textContent = "error";
+      statusEl.textContent = String(error);
+    });
+  </script>
+</body>
+</html>

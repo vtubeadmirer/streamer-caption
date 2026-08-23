@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>방송 검증 표시</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-2: #eef1f4;
+      --text: #17202a;
+      --muted: #65717d;
+      --line: #d8dee5;
+      --focus: #1263df;
+      --danger: #c7362f;
+      --danger-bg: #fff0ef;
+      --warning: #9b5d00;
+      --warning-bg: #fff4db;
+      --info: #1760a8;
+      --info-bg: #eaf4ff;
+      --success: #197047;
+      --success-bg: #e8f7ef;
+      --shadow: 0 8px 22px rgba(22, 31, 42, .08);
+    }
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #15181c;
+      --surface: #20252b;
+      --surface-2: #292f36;
+      --text: #f2f4f6;
+      --muted: #aab3bd;
+      --line: #3a424b;
+      --focus: #72a8ff;
+      --danger: #ff8e88;
+      --danger-bg: #402523;
+      --warning: #ffc65f;
+      --warning-bg: #3a3020;
+      --info: #8bc4ff;
+      --info-bg: #203247;
+      --success: #78d4a5;
+      --success-bg: #203a2d;
+      --shadow: 0 10px 28px rgba(0, 0, 0, .24);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    button, input { font: inherit; letter-spacing: 0; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible, a:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 45%, transparent);
+      outline-offset: 2px;
+    }
+    header {
+      min-height: 64px;
+      padding: 10px clamp(16px, 4vw, 40px);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    h1 { margin: 0; font-size: 20px; font-weight: 750; }
+    nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    nav a, .theme-button {
+      min-height: 38px;
+      padding: 8px 11px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    nav a:hover, .theme-button:hover { background: var(--surface-2); color: var(--text); }
+    main { width: min(980px, 100%); margin: 0 auto; padding: 22px clamp(16px, 4vw, 36px) 48px; }
+    .live-strip {
+      display: grid;
+      grid-template-columns: minmax(140px, .7fr) minmax(220px, 1.3fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .status { display: flex; align-items: center; gap: 9px; font-weight: 700; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+    .status-dot.live { background: #20a66a; box-shadow: 0 0 0 4px color-mix(in srgb, #20a66a 16%, transparent); }
+    .session { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clock { font: 700 20px/1 ui-monospace, "Cascadia Mono", monospace; }
+    .caption-preview {
+      margin-top: 14px;
+      min-height: 72px;
+      padding: 15px 16px;
+      border-left: 4px solid var(--focus);
+      background: var(--surface);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      overflow-wrap: anywhere;
+    }
+    .section-title { margin: 26px 0 10px; font-size: 16px; }
+    .note-row { display: flex; gap: 8px; }
+    .note-row input {
+      width: 100%; min-height: 44px; padding: 10px 12px;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: var(--surface); color: var(--text);
+    }
+    .action-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+    .mark-button {
+      min-height: 102px;
+      padding: 14px 10px;
+      border: 1px solid currentColor;
+      border-radius: 8px;
+      cursor: pointer;
+      display: grid;
+      align-content: center;
+      gap: 5px;
+      font-weight: 750;
+    }
+    .mark-button small { font-weight: 500; color: currentColor; opacity: .82; }
+    .mark-button[data-kind="hallucination"] { color: var(--danger); background: var(--danger-bg); }
+    .mark-button[data-kind="missed"] { color: var(--warning); background: var(--warning-bg); }
+    .mark-button[data-kind="wrong_word"] { color: var(--info); background: var(--info-bg); }
+    .mark-button[data-kind="good"] { color: var(--success); background: var(--success-bg); }
+    .mark-button:hover { filter: brightness(.97); transform: translateY(-1px); }
+    .mark-button:disabled { opacity: .42; cursor: not-allowed; transform: none; }
+    .recent-header { display: flex; align-items: center; gap: 12px; margin-top: 28px; }
+    .recent-header h2 { margin: 0; font-size: 16px; }
+    .recent-header span { margin-left: auto; color: var(--muted); }
+    .marker-list { margin-top: 10px; border-top: 1px solid var(--line); }
+    .marker-row {
+      display: grid;
+      grid-template-columns: 86px 130px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 58px;
+      padding: 9px 4px;
+      border-bottom: 1px solid var(--line);
+    }
+    .marker-time { font-family: ui-monospace, "Cascadia Mono", monospace; font-weight: 700; }
+    .marker-kind { font-weight: 700; }
+    .marker-detail { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+    .delete-button {
+      min-width: 58px; min-height: 36px; padding: 7px 10px;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: var(--surface); color: var(--text); cursor: pointer;
+    }
+    .delete-button:hover { border-color: var(--danger); color: var(--danger); }
+    .empty { padding: 28px 4px; color: var(--muted); text-align: center; border-bottom: 1px solid var(--line); }
+    .toast {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      max-width: calc(100vw - 32px); padding: 10px 14px; border-radius: 6px;
+      background: #17202a; color: #fff; box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none; transition: opacity .16s ease;
+    }
+    .toast.show { opacity: 1; }
+    @media (max-width: 720px) {
+      header { align-items: flex-start; flex-wrap: wrap; }
+      nav { width: 100%; margin-left: 0; overflow-x: auto; }
+      .live-strip { grid-template-columns: 1fr auto; }
+      .session { grid-column: 1 / -1; grid-row: 2; }
+      .action-grid { grid-template-columns: repeat(2, 1fr); }
+      .marker-row { grid-template-columns: 78px minmax(0, 1fr) auto; }
+      .marker-kind { grid-column: 2; }
+      .marker-detail { grid-column: 1 / 3; }
+      .delete-button { grid-column: 3; grid-row: 1 / 3; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>방송 검증 표시</h1>
+    <nav aria-label="주요 화면">
+      <a href="/admin">관리자</a>
+      <a href="/caption" target="_blank" rel="noopener">자막</a>
+      <a href="/history">방송 기록</a>
+      <button id="themeButton" class="theme-button" type="button">어둡게</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="live-strip" aria-label="현재 방송 상태">
+      <div class="status"><span id="statusDot" class="status-dot"></span><span id="statusText">연결 확인 중</span></div>
+      <div id="sessionText" class="session">세션 없음</div>
+      <div id="clock" class="clock">00:00:00</div>
+    </section>
+    <div id="captionPreview" class="caption-preview">아직 표시할 자막이 없습니다.</div>
+
+    <h2 class="section-title">현재 시점 표시</h2>
+    <div class="note-row">
+      <input id="note" type="text" maxlength="1000" placeholder="선택 사항: 들린 말이나 수정할 단어를 적으세요">
+    </div>
+    <div class="action-grid" id="actionGrid">
+      <button class="mark-button" type="button" data-kind="hallucination"><span>환각 자막</span><small>말하지 않은 자막</small></button>
+      <button class="mark-button" type="button" data-kind="missed"><span>말했지만 누락</span><small>자막이 나오지 않음</small></button>
+      <button class="mark-button" type="button" data-kind="wrong_word"><span>단어 오인식</span><small>다른 단어로 표시됨</small></button>
+      <button class="mark-button" type="button" data-kind="good"><span>정상 인식</span><small>잘 나온 기준 시점</small></button>
+    </div>
+
+    <div class="recent-header">
+      <h2>최근 표시</h2>
+      <span id="markerCount">0개</span>
+    </div>
+    <div id="markerList" class="marker-list" aria-live="polite"></div>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script>
+    const labels = {
+      hallucination: "환각 자막",
+      missed: "말했지만 누락",
+      wrong_word: "단어 오인식",
+      good: "정상 인식",
+    };
+    const state = { status: {}, session: null, annotations: [], busy: false };
+    const el = (id) => document.getElementById(id);
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `요청 실패 (${response.status})`);
+      return payload;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+      })[char]);
+    }
+
+    function offsetSeconds() {
+      const audio = state.status.last_audio || {};
+      const live = Number(audio.offset_sec || 0) + Number(audio.duration_sec || 0);
+      const archived = Number(state.session?.last_offset_sec || 0);
+      return Math.max(0, live, archived);
+    }
+
+    function formatOffset(value) {
+      const total = Math.max(0, Math.floor(Number(value) || 0));
+      const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+      const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+      const seconds = String(total % 60).padStart(2, "0");
+      return `${hours}:${minutes}:${seconds}`;
+    }
+
+    function showToast(message) {
+      const toast = el("toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    function renderStatus() {
+      const hasSession = Boolean(state.session);
+      const hasAudio = Boolean(state.status.last_audio?.offset_sec || state.status.last_audio?.duration_sec);
+      el("statusDot").classList.toggle("live", hasAudio);
+      el("statusText").textContent = hasAudio ? "오디오 수신 중" : (hasSession ? "최근 세션" : "세션 없음");
+      el("sessionText").textContent = state.session ? `${state.session.title || "제목 없는 방송"} · ${state.session.id}` : "먼저 자막 실행을 시작하세요";
+      el("clock").textContent = formatOffset(offsetSeconds());
+      el("captionPreview").textContent = state.status.last_caption || "아직 표시할 자막이 없습니다.";
+      document.querySelectorAll(".mark-button").forEach((button) => {
+        button.disabled = !hasSession || state.busy;
+      });
+    }
+
+    function renderMarkers() {
+      const items = [...state.annotations].reverse();
+      el("markerCount").textContent = `${items.length}개`;
+      if (!items.length) {
+        el("markerList").innerHTML = '<div class="empty">아직 표시한 시점이 없습니다.</div>';
+        return;
+      }
+      el("markerList").innerHTML = items.slice(0, 30).map((item) => {
+        const detail = item.note || item.caption_text || "메모 없음";
+        return `<div class="marker-row">
+          <span class="marker-time">${formatOffset(item.offset_sec)}</span>
+          <span class="marker-kind">${escapeHtml(labels[item.kind] || item.kind)}</span>
+          <span class="marker-detail">${escapeHtml(detail)}</span>
+          <button class="delete-button" type="button" data-delete-id="${item.id}">취소</button>
+        </div>`;
+      }).join("");
+    }
+
+    async function refresh() {
+      try {
+        const [status, latest] = await Promise.all([api("/api/status"), api("/api/archive/latest")]);
+        state.status = status;
+        const previousId = state.session?.id;
+        state.session = latest.session;
+        if (state.session && (previousId !== state.session.id || !state.annotations.length)) {
+          const payload = await api(`/api/archive/annotations?session_id=${encodeURIComponent(state.session.id)}&limit=5000`);
+          state.annotations = payload.annotations || [];
+          renderMarkers();
+        } else if (!state.session) {
+          state.annotations = [];
+          renderMarkers();
+        }
+        renderStatus();
+      } catch (error) {
+        el("statusText").textContent = "연결 오류";
+        showToast(error.message);
+      }
+    }
+
+    async function addMarker(kind) {
+      if (!state.session || state.busy) return;
+      state.busy = true;
+      renderStatus();
+      try {
+        const payload = await api("/api/archive/annotation", {
+          method: "POST",
+          body: JSON.stringify({
+            session_id: state.session.id,
+            kind,
+            offset_sec: offsetSeconds(),
+            note: el("note").value.trim(),
+            caption_text: state.status.last_caption || "",
+            metadata: { source: "validation_ui" },
+          }),
+        });
+        state.annotations.push(payload.annotation);
+        el("note").value = "";
+        renderMarkers();
+        showToast(`${labels[kind]} 표시를 저장했습니다.`);
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.busy = false;
+        renderStatus();
+      }
+    }
+
+    async function deleteMarker(annotationId) {
+      if (!state.session || state.busy) return;
+      state.busy = true;
+      try {
+        await api("/api/archive/annotation-delete", {
+          method: "POST",
+          body: JSON.stringify({ session_id: state.session.id, annotation_id: annotationId }),
+        });
+        state.annotations = state.annotations.filter((item) => item.id !== annotationId);
+        renderMarkers();
+        showToast("표시를 취소했습니다.");
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.busy = false;
+        renderStatus();
+      }
+    }
+
+    document.querySelectorAll(".mark-button").forEach((button) => {
+      button.addEventListener("click", () => addMarker(button.dataset.kind));
+    });
+    el("markerList").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-delete-id]");
+      if (button) deleteMarker(Number(button.dataset.deleteId));
+    });
+    el("themeButton").addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("streamer-caption-validation-theme", next);
+      el("themeButton").textContent = next === "dark" ? "밝게" : "어둡게";
+    });
+    const initialTheme = localStorage.getItem("streamer-caption-validation-theme") || "light";
+    document.documentElement.dataset.theme = initialTheme;
+    el("themeButton").textContent = initialTheme === "dark" ? "밝게" : "어둡게";
+    renderMarkers();
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>

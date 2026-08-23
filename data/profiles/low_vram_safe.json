@@ -1,0 +1,23 @@
+{
+    "app":  {
+                "profile":  "low_vram_safe"
+            },
+    "whisper":  {
+                    "model":  "medium",
+                    "device":  "cuda",
+                    "compute_type":  "int8_float16"
+                },
+    "streaming":  {
+                      "model":  "medium",
+                      "chunk_seconds":  1.2,
+                      "chunk_overlap_sec":  0.2,
+                      "buffer_max_sec":  16,
+                      "worker_mode":  "process"
+                  },
+    "audio":  {
+                  "max_segment_sec":  8.0
+              },
+    "monitoring":  {
+                       "memory_log_interval_min":  5
+                   }
+}

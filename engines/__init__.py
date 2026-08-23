@@ -1,0 +1,2 @@
+"""STT engine adapters."""
+

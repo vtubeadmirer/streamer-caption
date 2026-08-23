@@ -1,0 +1,173 @@
+{
+  "app": {
+    "mode": "baseline_v1_mode",
+    "profile": "custom"
+  },
+  "caption": {
+    "style": "classic_outline",
+    "ko_size": 34,
+    "en_size": 30,
+    "show_english": false,
+    "max_lines": 2,
+    "max_chars_per_line": 28,
+    "just_chatting_mode": false,
+    "just_chatting_min_line_hold_sec": 0.65,
+    "history_retention_sec": 1800,
+    "history_max_items": 1000,
+    "prev_opacity": 0.55,
+    "animation": "slide_up",
+    "position": "bottom_center",
+    "font": "Malgun Gothic",
+    "hold_time_auto": true
+  },
+  "whisper": {
+    "model": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "language": "ko",
+    "task": "transcribe",
+    "initial_prompt": "",
+    "beam_size": 5,
+    "temperature": 0.0,
+    "compression_ratio_threshold": 2.4,
+    "log_prob_threshold": -1.0,
+    "no_speech_threshold": 0.6,
+    "condition_on_previous_text": false,
+    "repetition_penalty": 1.05,
+    "no_repeat_ngram_size": 3
+  },
+  "audio": {
+    "source": "microphone",
+    "system_device": "",
+    "source_stall_timeout_sec": 3.0,
+    "source_retry_delay_sec": 1.0,
+    "source_max_restarts": 10,
+    "sample_rate": 16000,
+    "channels": 1,
+    "block_size": 1024,
+    "device": 1,
+    "vad_energy_threshold": 0.015,
+    "input_gain": 1.0,
+    "min_segment_peak_rms": 0.012,
+    "pre_roll_sec": 0.3,
+    "silence_duration_sec": 0.7,
+    "max_segment_sec": 12.0,
+    "min_segment_sec": 0.4
+  },
+  "streaming": {
+    "engine": "baseline",
+    "worker_mode": "process",
+    "model": "large-v3",
+    "chunk_seconds": 0.8,
+    "chunk_overlap_sec": 0.2,
+    "buffer_max_sec": 30,
+    "silence_reset_sec": 2,
+    "recovery_window_max_sec": 30,
+    "pending_debounce_sec": 0.3,
+    "pending_enabled": true,
+    "pending_skip_when_busy": true,
+    "pending_queue_max": 2,
+    "pending_min_chars": 2,
+    "pending_stale_sec": 3.0,
+    "pending_display_mode": "overlay_gray",
+    "pending_typing_effect": true,
+    "confirmed_hold_sec": 6.0,
+    "stt_stall_warn_sec": 20.0,
+    "stt_stall_restart_sec": 60.0,
+    "stt_cold_start_restart_sec": 300.0,
+    "stt_process_start_restart_sec": 60.0,
+    "stt_heartbeat_interval_sec": 2.0,
+    "stt_heartbeat_timeout_sec": 12.0,
+    "stt_latency_target_p95_sec": 4.0,
+    "error_recovery": {
+      "max_retry": 3,
+      "fallback_to": "baseline_v1_mode"
+    },
+    "gpu_fallback_on_fail": "degrade_to_cpu",
+    "ws_cache_sec": 15
+  },
+  "simulstreaming": {
+    "enabled": false,
+    "repo_dir": "experiments/vendor/SimulStreaming",
+    "python_executable": "",
+    "model_path": "",
+    "allow_auto_download": false,
+    "start_server": true,
+    "host": "127.0.0.1",
+    "port": 43007,
+    "min_chunk_size": 0.8,
+    "vac_chunk_size": 0.32,
+    "audio_max_len": 30.0,
+    "beams": 1,
+    "frame_threshold": 25,
+    "use_vac": true,
+    "never_fire": false,
+    "connect_timeout_sec": 90.0
+  },
+  "vad": {
+    "engine": "energy",
+    "device": "cpu",
+    "speech_threshold": 0.5,
+    "runtime_timeout_ms": 50,
+    "fallback_on_load_fail": "energy_vad_permanent",
+    "fallback_on_runtime_fail": "energy_vad_this_chunk_only"
+  },
+  "defense": {
+    "min_confidence_show": 0.55,
+    "dim_confidence_threshold": 0.7,
+    "blocklist_path": "data/blocklist.txt",
+    "whitelist_path": "data/whitelist.txt",
+    "filter_single_char": true,
+    "filter_repeat_char": true,
+    "filter_hallucination_patterns": true,
+    "min_segment_voice_ratio": 0.06,
+    "max_no_speech_prob": 0.75,
+    "hallucination_score_threshold": 0.72,
+    "min_avg_logprob": -0.95,
+    "max_compression_ratio": 2.6,
+    "short_utterance_max_chars": 12,
+    "short_utterance_min_confidence": 0.72,
+    "short_utterance_voice_ratio_floor": 0.02,
+    "repeat_window_sec": 45,
+    "repeat_limit": 2
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "admin_port": 8766
+  },
+  "slang": {
+    "dict_path": "data/slang_dict.json",
+    "prompt_mode": "off",
+    "prompt_max_chars": 800
+  },
+  "monitoring": {
+    "memory_log_interval_min": 10,
+    "leak_threshold_mb_per_hour": 50,
+    "leak_confirm_count": 3,
+    "warmup_exclude_min": 30
+  },
+  "archive": {
+    "enabled": true,
+    "db_path": "data/transcripts.sqlite3",
+    "bucket_minutes": 30,
+    "summary_max_bullets": 5,
+    "topic_window_captions": 6,
+    "topic_similarity_threshold": 0.22,
+    "topic_cooldown_sec": 30,
+    "highlight_limit": 10,
+    "highlight_weights": {
+      "strong_expression": 0.45,
+      "laughter": 0.65,
+      "keyword": 0.18,
+      "topic_change": 0.4
+    },
+    "live_analysis_enabled": true,
+    "live_analysis_every_captions": 8,
+    "live_analysis_min_interval_sec": 15,
+    "auto_report_on_close": true
+  },
+  "log": {
+    "dir": "logs"
+  }
+}

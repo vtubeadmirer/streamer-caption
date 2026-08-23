@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamer-caption-v2 preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --text: #ffffff;
+      --pending: rgba(220, 226, 235, 0.58);
+      --shadow: rgba(0, 0, 0, 0.92);
+      --accent: #20c997;
+      --caption-size: 34px;
+      --previous-opacity: 0.55;
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+    }
+    body.preview {
+      background: #111;
+      overflow-y: auto;
+    }
+    body.preview .stage {
+      position: relative;
+      inset: auto;
+      min-height: 100%;
+      height: auto;
+    }
+    .stage {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 36px;
+      box-sizing: border-box;
+    }
+    .caption {
+      max-width: min(1120px, 94vw);
+      text-align: center;
+      font-size: var(--caption-size);
+      line-height: 1.26;
+      font-weight: 800;
+      color: var(--text);
+      text-shadow:
+        -2px -2px 0 var(--shadow),
+        2px -2px 0 var(--shadow),
+        -2px 2px 0 var(--shadow),
+        2px 2px 0 var(--shadow),
+        0 4px 14px rgba(0, 0, 0, 0.55);
+      transform: translateY(12px);
+      opacity: 0;
+      transition: opacity 160ms ease, transform 160ms ease;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .line.previous {
+      opacity: var(--previous-opacity);
+    }
+    .line.pending {
+      color: var(--pending);
+    }
+    .pending-slot:not(:empty) {
+      margin-top: 0.08em;
+    }
+    .caption.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .status {
+      position: fixed;
+      top: 12px;
+      right: 14px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+      background: rgba(0, 0, 0, 0.28);
+      border-left: 3px solid var(--accent);
+      padding: 6px 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div id="caption" class="caption">
+      <div id="confirmedCaption" class="confirmed-stack"></div>
+      <div id="pendingCaption" class="pending-slot"></div>
+    </div>
+  </div>
+  <div id="status" class="status">connecting</div>
+  <script>
+    const caption = document.getElementById("caption");
+    const confirmedCaption = document.getElementById("confirmedCaption");
+    const pendingCaption = document.getElementById("pendingCaption");
+    const statusEl = document.getElementById("status");
+    const params = new URLSearchParams(location.search);
+    if (params.get("preview") !== "0") document.body.classList.add("preview");
+
+    let confirmedHistory = [];
+    let confirmedQueue = [];
+    let queuedConfirmedKeys = new Set();
+    let seenConfirmedKeys = new Set();
+    let queuedConfirmedContentKeys = new Set();
+    let seenConfirmedContentKeys = new Set();
+    let pendingText = "";
+    let lastPendingKey = "";
+    let lastPendingOffset = -1;
+    let lastConfirmedOffset = -1;
+    let lastConfirmedAt = 0;
+    let lastConfirmedCommitAt = 0;
+    let lastPendingAt = 0;
+    let hideTimer = null;
+    let pendingTimer = null;
+    let queueTimer = null;
+    let maxLines = Number(params.get("maxLines") || 2);
+    let historyMaxItems = 1000;
+    let justChattingMode = false;
+    let justChattingMinAdvanceMs = 650;
+    let confirmedHoldMs = Number(params.get("holdMs") || 6000);
+    let pendingStaleMs = Number(params.get("pendingStaleMs") || 3000);
+    let wsPort = 8765;
+    let connected = false;
+    let configSignature = "";
+
+    function adminUrl(path) {
+      const requestedOrigin = params.get("adminOrigin");
+      const origin = requestedOrigin || (
+        location.protocol === "file:"
+          ? "http://127.0.0.1:8766"
+          : location.origin
+      );
+      return new URL(path, origin).toString();
+    }
+
+    async function loadOverlayConfig() {
+      try {
+        const response = await fetch(
+          adminUrl("/api/config"),
+          { cache: "no-store" }
+        );
+        if (!response.ok) return;
+        const config = await response.json();
+        const captionConfig = config.caption || {};
+        const streamingConfig = config.streaming || {};
+        const configuredSize = Number(captionConfig.ko_size || 34);
+        const sizeParam = Number(
+          params.get("size") || params.get("koSize") || 0
+        );
+        const lineParam = Number(params.get("maxLines") || 0);
+        const holdParam = Number(params.get("holdMs") || 0);
+        const staleParam = Number(params.get("pendingStaleMs") || 0);
+
+        const nextMaxLines = Math.max(
+          1,
+          Math.min(
+            500,
+            lineParam || Number(captionConfig.max_lines || 2)
+          )
+        );
+        const nextJustChattingMode = Boolean(
+          captionConfig.just_chatting_mode
+        );
+        const nextHistoryMaxItems = Math.max(
+          12,
+          Math.min(
+            10000,
+            Number(captionConfig.history_max_items || 1000)
+          )
+        );
+        const nextMinAdvanceMs = Math.max(
+          0,
+          Math.min(
+            5000,
+            Number(
+              captionConfig.just_chatting_min_line_hold_sec ?? 0.65
+            ) * 1000
+          )
+        );
+        const nextConfirmedHoldMs = Math.max(
+          250,
+          holdParam
+            || Number(streamingConfig.confirmed_hold_sec || 6) * 1000
+        );
+        const nextPendingStaleMs = Math.max(
+          250,
+          staleParam
+            || Number(streamingConfig.pending_stale_sec || 3) * 1000
+        );
+        const nextSignature = [
+          nextMaxLines,
+          nextJustChattingMode,
+          nextHistoryMaxItems,
+          nextMinAdvanceMs,
+          nextConfirmedHoldMs,
+          nextPendingStaleMs,
+          sizeParam || configuredSize,
+          captionConfig.prev_opacity ?? 0.55,
+        ].join("|");
+
+        maxLines = nextMaxLines;
+        justChattingMode = nextJustChattingMode;
+        historyMaxItems = nextHistoryMaxItems;
+        justChattingMinAdvanceMs = nextMinAdvanceMs;
+        confirmedHoldMs = nextConfirmedHoldMs;
+        pendingStaleMs = nextPendingStaleMs;
+        wsPort = Number(config.server?.port || wsPort);
+        document.documentElement.style.setProperty(
+          "--caption-size",
+          String(sizeParam || configuredSize) + "px"
+        );
+        document.documentElement.style.setProperty(
+          "--previous-opacity",
+          String(captionConfig.prev_opacity ?? 0.55)
+        );
+
+        if (nextSignature !== configSignature) {
+          configSignature = nextSignature;
+          trimConfirmedHistory();
+          render();
+          scheduleTimers();
+          drainConfirmedQueue();
+        }
+      } catch (error) {
+        console.info(
+          "caption config unavailable; using defaults or URL params"
+        );
+      }
+    }
+
+    function updateVisibility() {
+      caption.classList.toggle(
+        "show",
+        Boolean(
+          confirmedHistory.length
+          || confirmedQueue.length
+          || pendingText
+        )
+      );
+    }
+
+    function renderConfirmed() {
+      const confirmedLines = confirmedHistory.slice(-maxLines);
+      confirmedCaption.innerHTML = confirmedLines.map((entry, index) => {
+        const className = index === confirmedLines.length - 1
+          ? "current"
+          : "previous";
+        return '<div class="line ' + className + '">'
+          + escapeHtml(entry.text)
+          + "</div>";
+      }).join("");
+      updateVisibility();
+    }
+
+    function renderPending() {
+      pendingCaption.innerHTML = pendingText
+        ? '<div class="line pending">'
+          + escapeHtml(pendingText)
+          + "</div>"
+        : "";
+      updateVisibility();
+    }
+
+    function render() {
+      renderConfirmed();
+      renderPending();
+      updateStatus();
+    }
+
+    function scheduleTimers() {
+      clearTimeout(hideTimer);
+      clearTimeout(pendingTimer);
+
+      if (pendingText) {
+        const remaining = Math.max(
+          0,
+          pendingStaleMs - (Date.now() - lastPendingAt)
+        );
+        pendingTimer = setTimeout(() => {
+          pendingText = "";
+          renderPending();
+        }, remaining);
+      }
+
+      if (!justChattingMode && confirmedHistory.length) {
+        const remaining = Math.max(
+          0,
+          confirmedHoldMs - (Date.now() - lastConfirmedAt)
+        );
+        hideTimer = setTimeout(() => {
+          if (justChattingMode) return;
+          pendingText = "";
+          confirmedHistory = [];
+          seenConfirmedKeys.clear();
+          seenConfirmedContentKeys.clear();
+          render();
+        }, remaining);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function trimConfirmedHistory() {
+      while (confirmedHistory.length > historyMaxItems) {
+        const removed = confirmedHistory.shift();
+        if (removed) seenConfirmedKeys.delete(removed.key);
+        if (removed) seenConfirmedContentKeys.delete(removed.contentKey);
+      }
+    }
+
+    function commitConfirmedBatch(entries) {
+      entries.forEach((entry) => {
+        queuedConfirmedKeys.delete(entry.key);
+        queuedConfirmedContentKeys.delete(entry.contentKey);
+        if (
+          seenConfirmedKeys.has(entry.key)
+          || seenConfirmedContentKeys.has(entry.contentKey)
+        ) return;
+        seenConfirmedKeys.add(entry.key);
+        seenConfirmedContentKeys.add(entry.contentKey);
+        confirmedHistory.push(entry);
+      });
+      trimConfirmedHistory();
+      lastConfirmedAt = Date.now();
+      lastConfirmedCommitAt = lastConfirmedAt;
+      renderConfirmed();
+      scheduleTimers();
+    }
+
+    function drainConfirmedQueue() {
+      if (queueTimer || !confirmedQueue.length) {
+        updateStatus();
+        return;
+      }
+      let interval = justChattingMode
+        ? justChattingMinAdvanceMs
+        : 0;
+      if (
+        justChattingMode
+        && confirmedQueue.length > maxLines * 2
+      ) {
+        interval = Math.max(200, interval * 0.5);
+      }
+      const elapsed = Date.now() - lastConfirmedCommitAt;
+      const delay = Math.max(0, interval - elapsed);
+      queueTimer = setTimeout(() => {
+        queueTimer = null;
+        const first = confirmedQueue.shift();
+        const batch = first ? [first] : [];
+        while (
+          first
+          && confirmedQueue.length
+          && confirmedQueue[0].batchKey === first.batchKey
+        ) {
+          batch.push(confirmedQueue.shift());
+        }
+        if (batch.length) commitConfirmedBatch(batch);
+        updateStatus();
+        drainConfirmedQueue();
+      }, delay);
+    }
+
+    function enqueueConfirmed(message) {
+      const text = String(message.text || "").trim();
+      if (!text) return;
+      const offset = Number(
+        message.audio_offset_sec ?? lastConfirmedOffset
+      );
+      if (offset < lastConfirmedOffset) return;
+      lastConfirmedOffset = Math.max(lastConfirmedOffset, offset);
+      const metadata = message.metadata || {};
+      const splitIndex = metadata.split_index ?? "";
+      const key = [
+        offset.toFixed(3),
+        splitIndex,
+        text,
+      ].join(":");
+      const batchKey = offset.toFixed(3);
+      const contentKey = [batchKey, text].join(":");
+      if (
+        queuedConfirmedKeys.has(key)
+        || seenConfirmedKeys.has(key)
+        || queuedConfirmedContentKeys.has(contentKey)
+        || seenConfirmedContentKeys.has(contentKey)
+      ) {
+        return;
+      }
+
+      pendingText = "";
+      lastPendingKey = "";
+      renderPending();
+      confirmedQueue.push({ key, contentKey, batchKey, text, offset });
+      queuedConfirmedKeys.add(key);
+      queuedConfirmedContentKeys.add(contentKey);
+      updateVisibility();
+      updateStatus();
+      drainConfirmedQueue();
+    }
+
+    function applyMessage(message) {
+      if (message.type === "sync") {
+        for (const item of message.items || []) applyMessage(item);
+        return;
+      }
+      if (
+        message.type === "caption_confirmed"
+        || message.type === "caption"
+      ) {
+        enqueueConfirmed(message);
+        return;
+      }
+      if (message.type === "caption_pending") {
+        const text = String(message.text || "").trim();
+        const offset = Number(message.audio_offset_sec ?? 0);
+        const key = [offset.toFixed(2), text].join(":");
+        if (
+          !text
+          || key === lastPendingKey
+          || offset < lastPendingOffset
+          || offset <= lastConfirmedOffset
+        ) {
+          return;
+        }
+        lastPendingKey = key;
+        lastPendingOffset = offset;
+        pendingText = text;
+        lastPendingAt = Date.now();
+        renderPending();
+        scheduleTimers();
+        return;
+      }
+      if (message.type === "caption_hidden") {
+        const offset = Number(message.audio_offset_sec ?? 0);
+        if (offset >= lastPendingOffset) {
+          pendingText = "";
+          renderPending();
+          scheduleTimers();
+        }
+      }
+    }
+
+    function updateStatus() {
+      if (!connected) return;
+      statusEl.textContent = confirmedQueue.length
+        ? "connected | 읽기 대기 " + confirmedQueue.length
+        : "connected";
+    }
+
+    function connect() {
+      const host = location.hostname || "127.0.0.1";
+      const socket = new WebSocket(
+        "ws://" + host + ":" + wsPort
+      );
+      socket.addEventListener("open", () => {
+        connected = true;
+        updateStatus();
+      });
+      socket.addEventListener("message", (event) => {
+        try {
+          applyMessage(JSON.parse(event.data));
+        } catch (error) {
+          console.error(error);
+        }
+      });
+      socket.addEventListener("close", () => {
+        connected = false;
+        statusEl.textContent = "reconnecting";
+        setTimeout(connect, 1000);
+      });
+      socket.addEventListener("error", () => {
+        statusEl.textContent = "connection error";
+      });
+    }
+
+    loadOverlayConfig().finally(connect);
+    setInterval(loadOverlayConfig, 1000);
+  </script>
+</body>
+</html>

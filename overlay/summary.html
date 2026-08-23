@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>지난 30분 요약</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --panel: rgba(16, 19, 22, 0.9);
+      --text: #f7f9fa;
+      --muted: #b9c2c8;
+      --accent: #5ed1ae;
+      --line: rgba(255, 255, 255, 0.16);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 24px;
+      background: transparent;
+      color: var(--text);
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    body.position-top { align-items: flex-start; }
+    body.light {
+      --panel: rgba(255, 255, 255, 0.94);
+      --text: #15191d;
+      --muted: #5f6972;
+      --accent: #13715b;
+      --line: rgba(20, 25, 30, 0.15);
+    }
+    .summary-panel {
+      width: min(860px, 100%);
+      padding: 18px 22px 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+    body.empty .summary-panel { opacity: 0; transform: translateY(10px); }
+    .heading {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding-bottom: 11px;
+      border-bottom: 1px solid var(--line);
+    }
+    .heading strong { color: var(--accent); font-size: 18px; }
+    .heading span { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+    #sessionState { margin-left: auto; color: var(--accent); }
+    h1 { margin: 13px 0 9px; font-size: 24px; line-height: 1.35; overflow-wrap: anywhere; }
+    ol { margin: 0; padding: 0; list-style: none; }
+    li {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 10px;
+      padding: 7px 0;
+      border-top: 1px solid var(--line);
+      line-height: 1.45;
+    }
+    li:first-child { border-top: 0; }
+    time { color: var(--accent); font-size: 16px; font-variant-numeric: tabular-nums; }
+    .bullet-text { min-width: 0; overflow-wrap: anywhere; }
+    @media (max-width: 640px) {
+      body { padding: 12px; font-size: 17px; }
+      .summary-panel { padding: 14px 15px; }
+      h1 { font-size: 20px; }
+      li { grid-template-columns: 60px minmax(0, 1fr); }
+      time { font-size: 14px; }
+    }
+  </style>
+</head>
+<body class="empty">
+  <section class="summary-panel" aria-live="polite">
+    <div class="heading"><strong>지난 30분 요약</strong><span id="sessionState">실시간</span><span id="range">-</span></div>
+    <h1 id="headline">기록 없음</h1>
+    <ol id="bullets"></ol>
+  </section>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const fixedSession = params.get("session_id") || "";
+    const fixedBucket = params.get("bucket");
+    const bulletLimit = Math.max(1, Math.min(Number(params.get("bullets") || 3), 5));
+    let broadcastEnded = false;
+    if (params.get("theme") === "light") document.body.classList.add("light");
+    if (params.get("position") === "top") document.body.classList.add("position-top");
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatOffset(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      return [h, m, s].map((part) => String(part).padStart(2, "0")).join(":");
+    }
+
+    async function getJson(path) {
+      const response = await fetch(path, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }
+
+    async function resolveTarget() {
+      if (fixedSession) {
+        return {
+          sessionId: fixedSession,
+          bucket: fixedBucket === null ? null : Math.max(0, Number(fixedBucket || 0)),
+          ended: broadcastEnded,
+        };
+      }
+      const latest = await getJson("/api/archive/latest");
+      if (!latest.session) return null;
+      const timeline = latest.timeline || [];
+      const bucket = fixedBucket !== null
+        ? Math.max(0, Number(fixedBucket || 0))
+        : null;
+      return {
+        sessionId: latest.session.id,
+        bucket,
+        ended: Boolean(latest.session.ended_at),
+      };
+    }
+
+    async function refresh() {
+      try {
+        const target = await resolveTarget();
+        if (!target) {
+          document.body.classList.add("empty");
+          return;
+        }
+        broadcastEnded = Boolean(target.ended || broadcastEnded);
+        document.getElementById("sessionState").textContent =
+          broadcastEnded ? "방송 종료" : "실시간";
+        const summaryMode = target.bucket === null
+          ? "window=latest"
+          : `window=bucket&bucket=${target.bucket}`;
+        const summary = await getJson(
+          `/api/archive/summary?session_id=${encodeURIComponent(target.sessionId)}&${summaryMode}`
+        );
+        const bullets = (summary.bullets || []).slice(0, bulletLimit);
+        if (!bullets.length) {
+          document.body.classList.add("empty");
+          return;
+        }
+        document.getElementById("range").textContent =
+          `${formatOffset(summary.window_start_sec)}–${formatOffset(summary.window_end_sec)}`;
+        document.getElementById("headline").textContent = summary.headline || "주요 대화";
+        document.getElementById("bullets").innerHTML = bullets.map((bullet) =>
+          `<li><time>${formatOffset(bullet.offset_sec)}</time><span class="bullet-text">${escapeHtml(bullet.text)}</span></li>`
+        ).join("");
+        document.body.classList.remove("empty");
+      } catch (_error) {
+        document.body.classList.add("empty");
+      }
+    }
+
+    let eventRefreshTimer = null;
+
+    function scheduleEventRefresh() {
+      clearTimeout(eventRefreshTimer);
+      eventRefreshTimer = setTimeout(refresh, 250);
+    }
+
+    function handleAnalysisMessage(payload) {
+      const items = payload.type === "sync"
+        ? (payload.items || [])
+        : [payload];
+      for (const item of items) {
+        if (
+          item.type !== "summary_updated"
+          && item.type !== "topic_changed"
+          && item.type !== "broadcast_ended"
+        ) {
+          continue;
+        }
+        const sessionId = item.metadata?.session_id || "";
+        if (fixedSession && sessionId !== fixedSession) continue;
+        if (item.type === "broadcast_ended") {
+          broadcastEnded = true;
+          document.getElementById("sessionState").textContent =
+            "방송 종료";
+        }
+        if (fixedBucket !== null) continue;
+        scheduleEventRefresh();
+      }
+    }
+
+    async function connectAnalysisEvents() {
+      try {
+        const config = await getJson("/api/config");
+        const host = location.hostname || "127.0.0.1";
+        const port = Number(config.server?.port || 8765);
+        const socket = new WebSocket(
+          "ws://" + host + ":" + port
+        );
+        socket.addEventListener("message", (event) => {
+          try {
+            handleAnalysisMessage(JSON.parse(event.data));
+          } catch (_error) {
+            return;
+          }
+        });
+        socket.addEventListener("close", () => {
+          setTimeout(connectAnalysisEvents, 1000);
+        });
+      } catch (_error) {
+        setTimeout(connectAnalysisEvents, 2000);
+      }
+    }
+
+    refresh();
+    connectAnalysisEvents();
+    setInterval(refresh, 15000);
+  </script>
+</body>
+</html>

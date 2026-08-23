@@ -1,0 +1,45 @@
+{
+    "app":  {
+                "mode":  "v2_light",
+                "profile":  "recommended_4060ti_v2_light"
+            },
+    "caption":  {
+                    "ko_size":  34,
+                    "max_lines":  2,
+                    "max_chars_per_line":  28,
+                    "just_chatting_mode":  false,
+                    "prev_opacity":  0.55
+                },
+    "whisper":  {
+                    "model":  "large-v3",
+                    "device":  "cuda",
+                    "compute_type":  "int8_float16",
+                    "language":  "ko",
+                    "task":  "transcribe"
+                },
+    "audio":  {
+                  "sample_rate":  16000,
+                  "block_size":  1024,
+                  "input_gain":  10.0,
+                  "min_segment_peak_rms":  0.012,
+                  "silence_duration_sec":  0.7,
+                  "max_segment_sec":  10.0,
+                  "min_segment_sec":  0.4
+              },
+    "streaming":  {
+                      "chunk_seconds":  1.0,
+                      "chunk_overlap_sec":  0.2,
+                      "buffer_max_sec":  20,
+                      "pending_debounce_sec":  0.3,
+                      "pending_queue_max":  2,
+                      "pending_min_chars":  2,
+                      "pending_stale_sec":  3.0,
+                      "confirmed_hold_sec":  6.0,
+                      "worker_mode":  "process"
+                  },
+    "vad":  {
+                "engine":  "silero",
+                "device":  "cpu",
+                "speech_threshold":  0.5
+            }
+}

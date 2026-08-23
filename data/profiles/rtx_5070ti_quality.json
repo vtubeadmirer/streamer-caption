@@ -1,0 +1,23 @@
+{
+    "app":  {
+                "profile":  "rtx_5070ti_quality"
+            },
+    "whisper":  {
+                    "model":  "large-v3",
+                    "device":  "cuda",
+                    "compute_type":  "float16"
+                },
+    "streaming":  {
+                      "model":  "large-v3",
+                      "chunk_seconds":  0.8,
+                      "chunk_overlap_sec":  0.2,
+                      "buffer_max_sec":  30,
+                      "worker_mode":  "process"
+                  },
+    "audio":  {
+                  "max_segment_sec":  12.0
+              },
+    "monitoring":  {
+                       "memory_log_interval_min":  10
+                   }
+}
