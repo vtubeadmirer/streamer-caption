@@ -1,0 +1,26 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run release validation
+        shell: pwsh
+        run: |
+          python -m py_compile launcher/updater.py tools/build_public_release.py tests/test_updater_cache.py
+          python tests/test_updater_cache.py
+          python tests/test_release_system.py
