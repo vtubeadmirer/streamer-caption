@@ -11,8 +11,8 @@ Before changing repository visibility
 
 - Confirm the root `LICENSE` file contains the approved MIT License text.
 - Review all direct and vendored dependency licenses and add third-party notices where required.
-- Pin the currently unpinned SimulStreaming dependencies before shipping that optional runtime.
-- Review the licenses for downloaded Whisper model weights separately from the Python packages.
+- Confirm the optional SimulStreaming requirements remain pinned to reviewed Windows-compatible versions.
+- Confirm the default Whisper model sources remain MIT and review any user-configured model repository separately.
 - Confirm that no live `config.json`, slang dictionary, protected terms, recordings, logs, reports, database, model cache, runtime, or virtual environment is tracked.
 - Search for absolute user paths, email addresses, access tokens, private keys, and credentials.
 - Review historical commits as well as the current tree before making the repository public.

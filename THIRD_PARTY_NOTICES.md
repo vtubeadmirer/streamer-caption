@@ -2,7 +2,7 @@ Streamer Caption third-party notice inventory
 
 Status
 
-This file is a release-readiness inventory, not the full license text bundle. Keep the repository private until the project license is chosen and every shipped or downloaded component has been verified. Installed Python wheels normally carry their own license files; the final installer must preserve them.
+This file is a release-readiness inventory, not the full license text bundle. The root project uses the MIT License. Keep the repository private until every shipped or downloaded component has been verified. Installed Python wheels normally carry their own license files; the final installer must preserve them.
 
 Direct runtime dependencies
 
@@ -17,14 +17,15 @@ Direct runtime dependencies
 Optional SimulStreaming dependencies
 
 - SimulStreaming vendored source: MIT; full text is in `experiments/vendor/SimulStreaming/LICENCE.txt`
-- librosa: ISC; pin and verify the selected version before release
-- tqdm: MPL-2.0 AND MIT; pin and verify the selected version before release
-- tiktoken: MIT; pin and verify the selected version before release
+- librosa 0.11.0: ISC
+- tqdm 4.68.4: MPL-2.0 AND MIT
+- tiktoken 0.12.0: MIT
 - torch and torchaudio CUDA wheels: preserve the license and bundled-component notices from the exact installed wheels
 
 Model files and external runtimes
 
-- Whisper model weights are downloaded separately and are not stored in the release ZIP. Verify the model-card license for each configured model before public distribution.
+- The default `Systran/faster-whisper-large-v3` model card declares MIT. The vendored SimulStreaming path downloads official OpenAI Whisper weights under MIT. Model files are downloaded separately and are not stored in the release ZIP. User-configured model repositories must be reviewed separately.
+- The Silero VAD package and upstream `snakers4/silero-vad` repository declare MIT.
 - Optional FFmpeg installation is user-triggered and not bundled. Its build configuration determines whether LGPL or GPL terms apply.
 - NVIDIA CUDA and cuDNN components have separate NVIDIA license terms and are not project-owned code.
 

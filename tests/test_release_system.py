@@ -42,6 +42,11 @@ def main() -> int:
     assert choose_profile("NVIDIA RTX", 24576)[0] == "gpu_20gb_quality"
     assert choose_profile("not detected", None)[0] == "cpu_compatible"
 
+    optional_requirements = (ROOT / "requirements_simulstreaming_windows.txt").read_text(encoding="utf-8").splitlines()
+    assert "librosa==0.11.0" in optional_requirements
+    assert "tqdm==4.68.4" in optional_requirements
+    assert "tiktoken==0.12.0" in optional_requirements
+
     with tempfile.TemporaryDirectory(prefix="streamer-release-test-") as temp:
         base = Path(temp)
         user_data = base / "user-data"
@@ -71,6 +76,8 @@ def main() -> int:
         assert not any(name.endswith(".wav") for name in names)
         assert not any(name.endswith(".sqlite3") for name in names)
         assert "update-check-cache.json" not in names
+        assert "LICENSE" in names
+        assert "THIRD_PARTY_NOTICES.md" in names
 
         install_root = base / "installed"
         install_archive(install_root, manifest, asset)
