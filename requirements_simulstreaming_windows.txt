@@ -1,6 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu128
 librosa==0.11.0
-tqdm==4.68.4
+tqdm==4.70.0
 tiktoken==0.12.0
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
