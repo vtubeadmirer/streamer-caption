@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "1.0.0-dev",
+  "version": "1.0.0-dev.1",
   "channel": "dev",
   "asset_name": "",
   "sha256": "",
@@ -9,5 +9,5 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "Development build for local installer and updater validation."
+  "release_notes": "First public prerelease for installer and updater validation."
 }

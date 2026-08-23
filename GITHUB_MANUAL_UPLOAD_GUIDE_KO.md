@@ -20,8 +20,8 @@
 사용자에게 배포할 설치 ZIP은 소스 저장소 안에 넣지 말고 GitHub 저장소의 `Releases`에 첨부합니다.
 
 - 소스: 이 폴더의 파일을 저장소에 커밋
-- 설치 파일: `streamer-caption-1.0.0-dev.zip`을 `Releases`에 첨부
-- 릴리스 태그 예시: `v1.0.0-dev`
+- 설치 파일: `streamer-caption-1.0.0-dev.1.zip`을 `Releases`에 첨부
+- 릴리스 태그 예시: `v1.0.0-dev.1`
 
 ## 공개 전 확인
 

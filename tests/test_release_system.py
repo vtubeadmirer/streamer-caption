@@ -41,6 +41,7 @@ def main() -> int:
     assert choose_profile("NVIDIA RTX", 16384)[0] == "gpu_12_16gb_balanced"
     assert choose_profile("NVIDIA RTX", 24576)[0] == "gpu_20gb_quality"
     assert choose_profile("not detected", None)[0] == "cpu_compatible"
+    source_version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
 
     optional_requirements = (ROOT / "requirements_simulstreaming_windows.txt").read_text(encoding="utf-8").splitlines()
     assert "librosa==0.11.0" in optional_requirements
@@ -88,10 +89,10 @@ def main() -> int:
         install_archive(install_root, second_manifest, second_asset)
         state = json.loads((install_root / "state.json").read_text(encoding="utf-8"))
         assert state["current_version"] == "1.0.1"
-        assert state["previous_version"] == "1.0.0-dev"
+        assert state["previous_version"] == source_version
         rollback(install_root)
         state = json.loads((install_root / "state.json").read_text(encoding="utf-8"))
-        assert state["current_version"] == "1.0.0-dev"
+        assert state["current_version"] == source_version
         assert persistent.read_text(encoding="utf-8") == "keep"
 
         malicious = base / "malicious.zip"
