@@ -33,7 +33,7 @@ jobs:
       - name: Build privacy-safe release assets
         run: python tools/build_public_release.py
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: streamer-caption-release
           path: |
