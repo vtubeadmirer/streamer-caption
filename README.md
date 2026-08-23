@@ -506,3 +506,10 @@ The versioned release workflow is documented in `docs/RELEASE_AND_UPDATE_ARCHITE
 - Application versions, shared runtime, and persistent user data are stored separately.
 - `BUILD_RELEASE.bat` creates a privacy-safe GitHub Release ZIP and SHA-256 manifest.
 - FFmpeg is optional and is installed separately with `INSTALL_OPTIONAL_FFMPEG.bat`.
+
+## License
+
+Streamer Caption source code is available under the MIT License. See `LICENSE`.
+Third-party packages, vendored components, model weights, and optional FFmpeg
+binaries remain subject to their own license terms. See
+`THIRD_PARTY_NOTICES.md` before redistribution.

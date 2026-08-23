@@ -3,12 +3,13 @@ Streamer Caption public release checklist
 Repository decision
 
 - Use `vtubeadmirer/streamer-caption` for both source and GitHub Releases.
-- Keep the repository private until the owner chooses a root project license.
+- The owner selected the MIT License for the root project.
+- Keep the repository private until the remaining history and dependency audits pass.
 - Do not publish a personal access token with the updater. Public release checks are unauthenticated.
 
 Before changing repository visibility
 
-- Choose and add the root `LICENSE` file.
+- Confirm the root `LICENSE` file contains the approved MIT License text.
 - Review all direct and vendored dependency licenses and add third-party notices where required.
 - Pin the currently unpinned SimulStreaming dependencies before shipping that optional runtime.
 - Review the licenses for downloaded Whisper model weights separately from the Python packages.
