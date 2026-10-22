@@ -1,0 +1,61 @@
+name: Build portable runtime
+
+# Builds runtime-<version>.zip (embedded Python 3.12 + requirements.txt, venv layout)
+# and publishes it as the release "runtime-<version>". The app's release manifest
+# points portable installs at this asset; it only changes when requirements change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: "Runtime version tag suffix (e.g. py312-v1)"
+        required: true
+        default: "py312-v1"
+  push:
+    branches: ["main"]
+    paths:
+      - "requirements.txt"
+      - "tools/build_runtime.py"
+
+permissions:
+  contents: write
+
+jobs:
+  runtime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve runtime version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.runtime_version }}"
+          if (-not $v) { $v = (Get-Content release-manifest.json -Raw | ConvertFrom-Json).runtime_version }
+          if (-not $v) { $v = "py312-v1" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Build runtime ZIP
+        run: python tools/build_runtime.py --runtime-version ${{ steps.ver.outputs.version }}
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ steps.ver.outputs.version }}
+          path: |
+            dist/runtime-*.zip
+            dist/runtime-manifest.json
+      - name: Publish as release runtime-${{ steps.ver.outputs.version }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "runtime-${{ steps.ver.outputs.version }}"
+          $zip = (Get-ChildItem dist -Filter "runtime-*.zip" | Select-Object -First 1).FullName
+          $manifest = (Resolve-Path dist/runtime-manifest.json).Path
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $zip $manifest --title "Portable runtime $tag" --notes "Embedded Python ${{ steps.ver.outputs.version }} runtime for the no-install launcher. Not an app release."
+          } else {
+            gh release upload $tag $zip $manifest --clobber
+          }

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>처음 설정 - Streamer Caption</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { --bg:#0f1317; --panel:#161c22; --line:#2a333d; --text:#f2f5f7; --muted:#9aa6b2; --accent:#5ed1ae; --warn:#e4b765; --danger:#e07e7e; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:"Malgun Gothic","Segoe UI",sans-serif; font-size:15px; line-height:1.55; }
+    .wrap { max-width:760px; margin:0 auto; padding:28px 20px 60px; }
+    h1 { font-size:26px; margin:0 0 6px; }
+    .lead { color:var(--muted); margin:0 0 22px; }
+    .step { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:14px; }
+    .step h2 { font-size:17px; margin:0 0 6px; display:flex; align-items:center; gap:10px; }
+    .num { display:inline-flex; width:26px; height:26px; border-radius:50%; background:var(--accent); color:#0b1410; font-weight:800; align-items:center; justify-content:center; font-size:14px; }
+    .step p { margin:4px 0 10px; color:var(--muted); font-size:14px; }
+    select, input[type=text] { width:100%; height:40px; background:#0d1115; border:1px solid var(--line); border-radius:8px; color:var(--text); padding:0 10px; font:inherit; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+    button { height:38px; padding:0 14px; border-radius:8px; border:1px solid var(--line); background:#1f2731; color:var(--text); font:inherit; cursor:pointer; }
+    button.primary { background:var(--accent); color:#0b1410; border-color:transparent; font-weight:700; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .status { font-size:13px; color:var(--muted); margin-top:6px; min-height:18px; }
+    .ok { color:var(--accent); } .warn { color:var(--warn); } .bad { color:var(--danger); }
+    .url { display:grid; grid-template-columns:150px 1fr auto; gap:8px; align-items:center; margin:6px 0; font-size:14px; }
+    .url code { background:#0d1115; border:1px solid var(--line); border-radius:6px; padding:8px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    label.opt { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line); cursor:pointer; }
+    label.opt:first-of-type { border-top:0; }
+    label.opt small { display:block; color:var(--muted); }
+    .done { text-align:center; padding:22px; }
+    .meter { height:8px; background:#0d1115; border-radius:4px; overflow:hidden; margin-top:8px; }
+    .meter > div { height:100%; width:0; background:var(--accent); transition:width 120ms linear; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>처음 설정</h1>
+  <p class="lead">세 가지만 확인하면 끝납니다. 설정은 이 PC에만 저장되고, 언제든 관리 화면에서 바꿀 수 있습니다.</p>
+
+  <section class="step">
+    <h2><span class="num">1</span> 그래픽카드와 모델</h2>
+    <p>자동으로 골랐습니다. 자막이 느리거나 끊기면 관리 화면에서 더 가벼운 프로필로 바꿀 수 있습니다.</p>
+    <div id="gpuInfo" class="status">확인 중…</div>
+  </section>
+
+  <section class="step">
+    <h2><span class="num">2</span> 마이크</h2>
+    <p>방송에 쓰는 마이크를 고르세요. 말하면 아래 막대가 움직여야 합니다.</p>
+    <select id="mic"></select>
+    <div class="meter"><div id="meter"></div></div>
+    <div class="row">
+      <label class="opt" style="border:0;padding:4px 0;"><input type="checkbox" id="dual"> <span>디스코드·PC 소리도 같이 자막으로 (듀얼)<small>PC에서 나는 소리를 "컴퓨터" 라벨로 따로 자막 처리합니다. 디스코드만 자막으로 만들려면 디스코드 출력 장치를 아래에서 고르는 장치로 바꾸세요.</small></span></label>
+    </div>
+    <select id="sys" style="display:none"></select>
+    <div id="micStatus" class="status"></div>
+  </section>
+
+  <section class="step">
+    <h2><span class="num">3</span> OBS에 넣기</h2>
+    <p>OBS에서 <b>소스 추가 → 브라우저</b>를 누르고 URL 칸에 아래 주소를 붙여 넣으면 됩니다. 폭 1280, 높이 400 정도가 적당합니다.</p>
+    <div class="url"><span>실시간 자막</span><code id="u1"></code><button data-copy="u1">복사</button></div>
+    <div class="url"><span>15분 요약</span><code id="u2"></code><button data-copy="u2">복사</button></div>
+    <div class="url"><span>대화 기록 (본인용)</span><code id="u3"></code><button data-copy="u3">복사</button></div>
+    <div id="copyStatus" class="status"></div>
+  </section>
+
+  <section class="step">
+    <h2><span class="num">4</span> 요약 AI (선택)</h2>
+    <p>끄더라도 15분 요약은 핵심 문장 추출로 동작합니다. AI를 켜면 읽기 쉬운 문장 요약이 됩니다.</p>
+    <label class="opt"><input type="radio" name="recap" value="none"> <span>끄기 (키워드 요약만)<small>아무것도 외부로 보내지 않습니다.</small></span></label>
+    <label class="opt"><input type="radio" name="recap" value="auto" checked> <span>자동 (권장)<small>이 PC에 Ollama 같은 로컬 AI나 Claude·Codex CLI가 있으면 쓰고, 없으면 키워드 요약으로 동작합니다. 나중에 설치해도 자동으로 인식합니다.</small></span></label>
+    <div id="recapStatus" class="status"></div>
+  </section>
+
+  <div class="done">
+    <button class="primary" id="save" style="height:46px;padding:0 28px;font-size:16px;">저장하고 시작</button>
+    <div id="saveStatus" class="status"></div>
+  </div>
+</div>
+<script>
+  const base = location.origin;
+  const $ = (id) => document.getElementById(id);
+  let config = null;
+  let devices = { devices: [], system_devices: [] };
+
+  async function getJson(path) { const r = await fetch(base + path, { cache: "no-store" }); if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }
+  async function postJson(path, payload) { const r = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const data = await r.json(); if (!r.ok) throw new Error(data.error || ("HTTP " + r.status)); return data; }
+
+  function fillSelect(select, items, current, labelOf, valueOf) {
+    select.innerHTML = "";
+    for (const item of items) {
+      const option = document.createElement("option");
+      option.value = String(valueOf(item)); option.textContent = labelOf(item);
+      if (String(valueOf(item)) === String(current)) option.selected = true;
+      select.appendChild(option);
+    }
+  }
+
+  async function load() {
+    config = await getJson("/api/config");
+    const port = config.server?.admin_port || 8766;
+    $("u1").textContent = `http://127.0.0.1:${port}/caption`;
+    $("u2").textContent = `http://127.0.0.1:${port}/recap`;
+    $("u3").textContent = `http://127.0.0.1:${port}/history`;
+    const profile = config.app?.profile || "custom";
+    $("gpuInfo").innerHTML = `프로필 <b>${profile}</b> · 모델 <b>${config.whisper?.model}</b> · 장치 <b>${config.whisper?.device}</b>`;
+    $("gpuInfo").className = "status " + (config.whisper?.device === "cuda" ? "ok" : "warn");
+    if (config.whisper?.device !== "cuda") $("gpuInfo").innerHTML += " · NVIDIA 그래픽카드가 없어 CPU로 동작합니다. 자막이 몇 초 늦을 수 있습니다.";
+    try {
+      devices = await getJson("/api/devices");
+      // /api/devices: microphones are InputDevice{index,name,channels,...}; playback devices are SystemAudioDevice{id,name,is_default}.
+      // Windows lists every microphone once per host API (MME, DirectSound, WASAPI...); show each name once.
+      const seen = new Set();
+      const mics = (devices.devices || []).filter((d) => {
+        const key = d.name.replace(/\s*\(.*$/, "").trim().toLowerCase();
+        if (seen.has(key) && d.index !== config.audio?.device) return false;
+        seen.add(key); return true;
+      });
+      fillSelect($("mic"), mics, config.audio?.device, (d) => d.name, (d) => d.index);
+      fillSelect($("sys"), devices.system_devices || [], config.audio?.system_device, (d) => `${d.name}${d.is_default ? " (기본 출력)" : ""}`, (d) => d.name);
+      if (!(devices.devices || []).length) $("micStatus").textContent = "마이크를 찾지 못했습니다. 연결을 확인한 뒤 새로고침하세요.";
+    } catch (error) {
+      $("micStatus").textContent = "장치 목록을 가져오지 못했습니다: " + error.message;
+    }
+    $("dual").checked = config.audio?.source === "both";
+    $("sys").style.display = $("dual").checked ? "" : "none";
+    const recap = config.archive?.recap?.provider || "auto";
+    const radio = document.querySelector(`input[name=recap][value="${recap === "none" ? "none" : "auto"}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  $("dual").addEventListener("change", () => { $("sys").style.display = $("dual").checked ? "" : "none"; });
+  for (const button of document.querySelectorAll("button[data-copy]")) {
+    button.addEventListener("click", async () => {
+      const text = $(button.dataset.copy).textContent;
+      try { await navigator.clipboard.writeText(text); $("copyStatus").textContent = "복사했습니다: " + text; $("copyStatus").className = "status ok"; }
+      catch { $("copyStatus").textContent = "복사가 안 되면 주소를 드래그해서 복사하세요."; $("copyStatus").className = "status warn"; }
+    });
+  }
+
+  // Live level from the running app's status (last_audio.rms) so the user sees the mic working.
+  async function pollLevel() {
+    try {
+      const status = await getJson("/api/status");
+      const audio = status.last_audio || {};
+      const rms = Number(audio.rms ?? audio.level ?? audio.peak_rms ?? 0);
+      $("meter").querySelector("div").style.width = Math.min(100, Math.round(rms * 400)) + "%";
+    } catch { /* app may still be starting */ }
+    setTimeout(pollLevel, 250);
+  }
+
+  $("save").addEventListener("click", async () => {
+    $("save").disabled = true;
+    $("saveStatus").textContent = "저장 중…";
+    try {
+      const micValue = $("mic").value;
+      const micNumber = Number(micValue);
+      const payload = {
+        audio: {
+          device: Number.isFinite(micNumber) && micValue !== "" ? micNumber : micValue,
+          source: $("dual").checked ? "both" : "microphone",
+          system_device: $("dual").checked ? $("sys").value : (config.audio?.system_device || ""),
+        },
+        archive: { recap: { provider: document.querySelector("input[name=recap]:checked").value } },
+      };
+      await postJson("/api/config", payload);
+      $("saveStatus").innerHTML = "저장했습니다. <b>마이크나 듀얼 설정을 바꿨다면</b> 자막 창을 닫고 StreamerCaption.bat을 다시 실행해야 적용됩니다. 바꾸지 않았다면 이 창을 닫고 방송을 시작하세요.";
+      $("saveStatus").className = "status ok";
+    } catch (error) {
+      $("saveStatus").textContent = "저장하지 못했습니다: " + error.message;
+      $("saveStatus").className = "status bad";
+    } finally {
+      $("save").disabled = false;
+    }
+  });
+
+  load().then(pollLevel).catch((error) => { $("gpuInfo").textContent = "앱에 연결하지 못했습니다. 자막 창이 켜져 있는지 확인하세요. (" + error.message + ")"; $("gpuInfo").className = "status bad"; });
+</script>
+</body>
+</html>

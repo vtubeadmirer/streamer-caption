@@ -9,5 +9,9 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "Dual input (microphone + PC playback with cross-source echo suppression), 15-minute bucket recaps with an OBS overlay (/recap) and zero-config LLM fallback, large-v3-turbo profile, July stabilization fixes."
+  "release_notes": "Dual input (microphone + PC playback with cross-source echo suppression), 15-minute bucket recaps with an OBS overlay (/recap) and zero-config LLM fallback, large-v3-turbo profile, July stabilization fixes.",
+  "runtime_asset_name": "runtime-py312-v1.zip",
+  "runtime_sha256": "",
+  "runtime_size": 0,
+  "runtime_release_tag": "runtime-py312-v1"
 }

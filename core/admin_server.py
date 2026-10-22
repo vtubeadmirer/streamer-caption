@@ -116,6 +116,9 @@ class AdminServer:
                 if path in {"/history", "/history.html"}:
                     self._send_file(PROJECT_ROOT / "overlay" / "history.html", "text/html; charset=utf-8")
                     return
+                if path in {"/setup", "/setup.html"}:
+                    self._send_file(PROJECT_ROOT / "overlay" / "setup.html", "text/html; charset=utf-8")
+                    return
                 if path in {"/recap", "/recap.html"}:
                     self._send_file(PROJECT_ROOT / "overlay" / "recap.html", "text/html; charset=utf-8")
                     return

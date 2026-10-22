@@ -94,3 +94,41 @@ Decisions still required before public launch
 - Choose the project license. Do not publish as open source until the owner selects a license.
 - Test full dependency installation and a live caption session on the RTX 4060 Ti machine.
 - Consider Windows code signing to reduce SmartScreen warnings.
+
+## 8. Portable (no-install) mode
+
+The portable ZIP (`StreamerCaption-<version>-portable.zip`) contains the same
+layout as an installation, minus the runtime:
+
+```text
+StreamerCaption/
+|-- StreamerCaption.bat         one-button entry (bootstrap.ps1 -> launcher.ps1 -Direct)
+|-- README-FIRST.txt
+|-- runtime.json                {runtime_version, asset_name, sha256, size, url}
+|-- state.json                  {current_version: <version>, portable: true}
+|-- updater.json                copied from updater.example.json
+|-- launcher/                   bootstrap.ps1, launcher.ps1, updater.py
+|-- versions/<version>/         the app (same content as the release ZIP)
+|-- runtime/                    filled on first run (.venv layout)
+`-- user-data/                  created on first run
+```
+
+`launcher/bootstrap.ps1` (PowerShell, present on every Windows) is the only code
+that runs before Python exists. It:
+
+1. Reads `runtime.json`; if `runtime/.venv/RUNTIME_VERSION` differs, downloads the
+   runtime ZIP (or uses one placed next to the .bat), verifies SHA-256, extracts
+   to a staging folder and swaps it in.
+2. On first run creates `user-data/` (`tools/bootstrap_user_data.py`), applies the
+   auto GPU preset and writes `first-run.flag`.
+3. Hands over to `launcher.ps1 -Direct`, which performs the normal update check,
+   junctions, starts `tools/run_supervised.py`, and opens `/setup` on the first run.
+
+Runtime ZIPs are built by `tools/build_runtime.py` (embedded CPython 3.12 placed in
+a venv-shaped tree so every existing .bat keeps working) and published by the
+`Build portable runtime` workflow as GitHub release `runtime-<runtime_version>`.
+The app release manifest carries `runtime_version`, `runtime_asset_name`,
+`runtime_sha256`, `runtime_size`, `runtime_release_tag` and `runtime_url`; the
+release workflow fills them from the published `runtime-manifest.json`.
+`updater.py update` calls `ensure_runtime()` before activating a new app version,
+so an app release that needs a newer runtime never starts on the old one.

@@ -24,3 +24,6 @@ jobs:
           python -m py_compile launcher/updater.py tools/build_public_release.py tests/test_updater_cache.py
           python tests/test_updater_cache.py
           python tests/test_release_system.py
+          python tests/test_updater_no_release.py
+          python tests/test_portable_release.py
+          python tests/test_updater_runtime.py

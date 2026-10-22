@@ -572,3 +572,30 @@ Streamer Caption source code is available under the MIT License. See `LICENSE`.
 Third-party packages, vendored components, model weights, and optional FFmpeg
 binaries remain subject to their own license terms. See
 `THIRD_PARTY_NOTICES.md` before redistribution.
+
+## No-Install (Portable) Version
+
+`StreamerCaption-<version>-portable.zip` is the one-button build for streamers:
+
+1. Unzip anywhere (not inside a synced folder such as OneDrive).
+2. Double-click `StreamerCaption.bat`.
+   - First run only: the shared Python runtime (about 1 GB, `runtime-py312-v1.zip`
+     from the `runtime-py312-v1` GitHub release) is downloaded with a progress bar,
+     verified by SHA-256 and unpacked into `runtime/.venv`. The speech model is
+     downloaded when captions start.
+   - The browser then opens `http://127.0.0.1:8766/setup`: pick the microphone,
+     optionally turn on dual (PC playback) captions, copy the OBS URLs, choose how
+     recaps are generated. Everything is saved under `user-data/` and survives updates.
+3. Every later run is one double-click: captions start and the admin page is one
+   click away.
+
+Offline PCs: download `runtime-py312-v1.zip` once, put it next to
+`StreamerCaption.bat`, and it is used instead of the network. The layout is the
+same side-by-side scheme as the installed version (`versions/<ver>`, `runtime/`,
+`user-data/`), so updates and rollback work identically; when a release needs a
+newer runtime, the updater fetches it before switching the app version.
+
+Build locally with `python tools/build_runtime.py` (runtime) and
+`BUILD_RELEASE.bat` (app ZIP + portable ZIP + manifest). On GitHub the
+`Build portable runtime` workflow publishes the runtime release and the normal
+tag release attaches both app ZIPs.

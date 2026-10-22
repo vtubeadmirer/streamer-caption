@@ -382,6 +382,78 @@ def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path)
     return {"installed": version, "previous_version": state.get("previous_version"), "path": str(target)}
 
 
+RUNTIME_MARKER = "RUNTIME_VERSION"
+
+
+def current_runtime_version(install_root: Path) -> str:
+    marker = install_root / "runtime" / ".venv" / RUNTIME_MARKER
+    try:
+        return marker.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
+
+
+def runtime_info_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """The portable runtime a release expects, or None when the manifest predates runtime fields."""
+    version = str(manifest.get("runtime_version") or "").strip()
+    url = str(manifest.get("runtime_url") or "").strip()
+    if not version or not url:
+        return None
+    return {
+        "runtime_version": version,
+        "asset_name": str(manifest.get("runtime_asset_name") or f"runtime-{version}.zip"),
+        "sha256": str(manifest.get("runtime_sha256") or "").lower(),
+        "size": int(manifest.get("runtime_size") or 0),
+        "url": url,
+    }
+
+
+def install_runtime_archive(install_root: Path, archive: Path, info: dict[str, Any]) -> dict[str, Any]:
+    """Verify and swap in a runtime ZIP (.venv/ layout). The old runtime is replaced only after a full extract."""
+    expected = info.get("sha256") or ""
+    if expected:
+        actual = _sha256(archive)
+        if actual != expected:
+            raise UpdateError(f"runtime SHA-256 mismatch: expected {expected}, got {actual}")
+    runtime_root = install_root / "runtime"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    staging = runtime_root / f".staging-{uuid.uuid4().hex}"
+    try:
+        _safe_extract(archive, staging)
+        extracted = staging / ".venv"
+        if not (extracted / "Scripts" / "python.exe").exists():
+            raise UpdateError("runtime archive has no .venv/Scripts/python.exe")
+        marker = (extracted / RUNTIME_MARKER).read_text(encoding="utf-8-sig").strip() if (extracted / RUNTIME_MARKER).exists() else ""
+        if marker and marker != info["runtime_version"]:
+            raise UpdateError(f"runtime archive is {marker}, expected {info['runtime_version']}")
+        target = runtime_root / ".venv"
+        if target.exists():
+            old = runtime_root / f".old-{uuid.uuid4().hex}"
+            target.rename(old)
+            shutil.rmtree(old, ignore_errors=True)
+        extracted.rename(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    _atomic_json(install_root / "runtime.json", info)
+    return {"runtime_version": info["runtime_version"], "runtime_installed": True}
+
+
+def ensure_runtime(install_root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Download the runtime a release needs when the installed one differs. No-op for venv installs without runtime fields."""
+    info = runtime_info_from_manifest(manifest)
+    if info is None:
+        return {"runtime_version": current_runtime_version(install_root), "runtime_installed": False}
+    if current_runtime_version(install_root) == info["runtime_version"]:
+        return {"runtime_version": info["runtime_version"], "runtime_installed": False}
+    archive = install_root / "downloads" / info["asset_name"]
+    if not archive.exists():
+        _download(info["url"], archive)
+    try:
+        return install_runtime_archive(install_root, archive, info)
+    finally:
+        archive.unlink(missing_ok=True)
+
+
 def update_from_github(install_root: Path) -> dict[str, Any]:
     status = check_for_update(install_root, force=True)
     if not status.get("available"):
@@ -390,8 +462,11 @@ def update_from_github(install_root: Path) -> dict[str, Any]:
     version = _validate_version(str(manifest["version"]))
     archive = install_root / "downloads" / f"{version}.zip"
     _download(str(status["asset_url"]), archive)
+    # Runtime first: a new app version must never be activated on a runtime it cannot run on.
+    runtime = ensure_runtime(install_root, manifest)
     result = install_archive(install_root, manifest, archive)
     result["downloaded"] = str(archive)
+    result.update(runtime)
     return result
 
 

@@ -30,6 +30,17 @@ jobs:
           if ("${{ github.ref_name }}" -ne $expected) {
             throw "Tag ${{ github.ref_name }} does not match VERSION $expected"
           }
+      - name: Fetch the published runtime manifest (optional)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $tag = (Get-Content release-manifest.json -Raw | ConvertFrom-Json).runtime_release_tag
+          if ($tag) {
+            gh release download $tag --pattern runtime-manifest.json --dir dist 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Warning "No runtime release $tag yet; manifest keeps the template runtime fields." }
+          }
       - name: Build privacy-safe release assets
         run: python tools/build_public_release.py
       - name: Upload workflow artifact
@@ -45,12 +56,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = @(Get-ChildItem -LiteralPath dist -Filter "*.zip")
-          if ($zip.Count -ne 1) {
-            throw "Expected exactly one release ZIP; found $($zip.Count)"
+          $zips = @(Get-ChildItem -LiteralPath dist -Filter "*.zip" | Where-Object { $_.Name -notlike "runtime-*" })
+          if ($zips.Count -lt 1) {
+            throw "No release ZIP was built"
           }
           $manifest = (Resolve-Path "dist/release-manifest.json").Path
-          $releaseArgs = @("${{ github.ref_name }}", $zip[0].FullName, $manifest, "--draft", "--generate-notes", "--verify-tag")
+          $releaseArgs = @("${{ github.ref_name }}") + @($zips | ForEach-Object { $_.FullName }) + @($manifest, "--draft", "--generate-notes", "--verify-tag")
           if ("${{ github.ref_name }}" -match "-") {
             $releaseArgs += "--prerelease"
           }
