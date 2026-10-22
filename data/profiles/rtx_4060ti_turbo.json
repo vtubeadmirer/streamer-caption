@@ -1,0 +1,24 @@
+{
+    "app": {
+        "profile": "rtx_4060ti_turbo"
+    },
+    "whisper": {
+        "model": "large-v3-turbo",
+        "device": "cuda",
+        "compute_type": "int8_float16",
+        "beam_size": 3
+    },
+    "streaming": {
+        "model": "large-v3-turbo",
+        "chunk_seconds": 0.8,
+        "chunk_overlap_sec": 0.2,
+        "buffer_max_sec": 20,
+        "worker_mode": "process"
+    },
+    "audio": {
+        "max_segment_sec": 10.0
+    },
+    "monitoring": {
+        "memory_log_interval_min": 5
+    }
+}

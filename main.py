@@ -6,13 +6,14 @@ from copy import deepcopy
 from dataclasses import replace
 
 from core.audio_capture import AudioSegmentSource
-from core.audio_sources import create_audio_chunk_source
+from core.audio_sources import config_for_audio_source, create_audio_chunk_source
 from core.admin_server import AdminServer, AdminState
 from core.config import load_config
 from core.events import CaptionEvent
 from core.log_writer import JsonlLogWriter
 from core.monitoring import MemoryMonitor
 from core.session_archive import SessionArchiveRecorder
+from core.source_dedup import CrossSourceCaptionDeduplicator
 from core.recovery import ConfirmedRangeLedger
 from core.stt_worker import SttResult
 from core.stt_worker_factory import create_and_start_stt_worker
@@ -32,7 +33,7 @@ STT_STALL_EXIT_CODE = 75
 def prepare_runtime_config(config: dict) -> tuple[dict, str | None]:
     """Use speech-aware VAD for PC playback without overwriting user config."""
     if (
-        config.get("audio", {}).get("source") == "system"
+        config.get("audio", {}).get("source") in {"system", "both"}
         and config.get("vad", {}).get("engine") == "energy"
     ):
         runtime_config = deepcopy(config)
@@ -59,6 +60,16 @@ def run_live(
     enable_admin: bool,
     show_levels: bool,
 ) -> int:
+    if config.get("audio", {}).get("source") == "both":
+        print("Dual input uses the v2_light scheduler.")
+        return run_v2_light(
+            config,
+            max_segments,
+            max_seconds,
+            enable_ws,
+            enable_admin,
+            show_levels,
+        )
     config, runtime_warning = prepare_runtime_config(config)
     writer = JsonlLogWriter(config["log"]["dir"])
     admin_state = AdminState()
@@ -101,8 +112,9 @@ def run_live(
             last_level_print = time.monotonic()
             voice = "VOICE" if info["is_voice"] else "quiet"
             print(
-                "\raudio rms={rms:.5f} vad={vad_engine}:{vad_score:.3f}/{threshold:.3f} gain={gain:.1f} {voice}{discard}      ".format(
-                    rms=info["rms"],
+                "\r{source} audio rms={rms:.5f} vad={vad_engine}:{vad_score:.3f}/{threshold:.3f} gain={gain:.1f} {voice}{discard}      ".format(
+                    source=info.get("audio_source", "audio"),
+                rms=info["rms"],
                     vad_engine=info.get("vad_engine", "energy"),
                     vad_score=info.get("vad_score", info["rms"]),
                     threshold=info["threshold"],
@@ -543,8 +555,29 @@ def run_v2_light(
         )
         print(f"warning: {runtime_warning}")
     source = create_audio_chunk_source(config)
-    scheduler = PendingWindowScheduler(config)
+    source_mode = str(getattr(source, "source_name", config["audio"]["source"]))
+    source_names = (
+        ("microphone", "system")
+        if source_mode == "both"
+        else (source_mode,)
+    )
+    source_configs = {
+        name: config_for_audio_source(config, name)
+        for name in source_names
+    }
+    schedulers = {
+        name: PendingWindowScheduler(source_configs[name])
+        for name in source_names
+    }
+    caption_config = config.get("caption", {})
+    source_labels = {
+        "microphone": str(caption_config.get("microphone_label", "방송자")),
+        "system": str(caption_config.get("system_label", "컴퓨터")),
+    }
+    dual_config = config.get("audio", {}).get("dual", {})
+    microphone_priority = bool(dual_config.get("microphone_priority", True))
     confirmed_ledger = ConfirmedRangeLedger()
+    source_deduplicator = CrossSourceCaptionDeduplicator(config)
     defense = DefenseFilter(config)
     slang = SlangDictionary(config)
     ws_server = CaptionWebSocketServer(config) if enable_ws else None
@@ -559,7 +592,7 @@ def run_v2_light(
     session_archive = SessionArchiveRecorder(
         config,
         writer,
-        source=str(getattr(source, "source_name", config["audio"]["source"])),
+        source=source_mode,
         engine=str(getattr(engine, "name", "baseline")),
         mode="v2_light",
         analysis_sink=(
@@ -597,6 +630,34 @@ def run_v2_light(
         if output_event.metadata.get("degraded_reason"):
             admin_state.degraded_mode = True
 
+    def emit_caption(
+        output_event: CaptionEvent,
+        extra: dict | None = None,
+    ) -> None:
+        duplicate = source_deduplicator.check(output_event)
+        if duplicate is None:
+            emit(output_event, extra=extra)
+            return
+        emit(
+            CaptionEvent(
+                event_type="caption_hidden",
+                text=output_event.text,
+                confidence=output_event.confidence,
+                audio_offset_sec=output_event.audio_offset_sec,
+                engine=output_event.engine,
+                metadata={
+                    **output_event.metadata,
+                    "defense_reason": "cross_source_duplicate",
+                    "duplicate_source": duplicate.matched_source,
+                    "duplicate_similarity": round(duplicate.similarity, 4),
+                    "duplicate_offset_delta_sec": round(
+                        duplicate.offset_delta_sec,
+                        4,
+                    ),
+                },
+            ),
+            extra=extra,
+        )
     def emit_worker_result(result: SttResult) -> None:
         nonlocal warned_stt_job_id
         snapshot = stt_worker.snapshot()
@@ -616,7 +677,7 @@ def run_v2_light(
         if result.job.job_type == "pending":
             for event in result.events:
                 for output_event in pending_events(event, defense, slang):
-                    emit(
+                    emit_caption(
                         output_event,
                         extra={
                             **result.job.metadata,
@@ -647,7 +708,7 @@ def run_v2_light(
             }
             for event in result.events:
                 for output_event in postprocess_event(event, defense, slang):
-                    emit(
+                    emit_caption(
                         output_event,
                         extra={
                             **result.job.metadata,
@@ -668,7 +729,8 @@ def run_v2_light(
         last_level_print = time.monotonic()
         voice = "VOICE" if info["is_voice"] else "quiet"
         print(
-            "\raudio rms={rms:.5f} vad={vad_engine}:{vad_score:.3f}/{threshold:.3f} gain={gain:.1f} {voice}{discard}      ".format(
+            "\r{source} audio rms={rms:.5f} vad={vad_engine}:{vad_score:.3f}/{threshold:.3f} gain={gain:.1f} {voice}{discard}      ".format(
+                source=info.get("audio_source", "audio"),
                 rms=info["rms"],
                 vad_engine=info.get("vad_engine", "energy"),
                 vad_score=info.get("vad_score", info["rms"]),
@@ -697,11 +759,15 @@ def run_v2_light(
         writer.append_event(initial_memory)
         admin_state.last_memory = initial_memory.metadata
 
-    source_name = getattr(source, "source_name", config["audio"]["source"])
+    source_name = source_mode
     source_instruction = (
-        "Play the broadcast on this PC."
-        if source_name == "system"
-        else "Speak into the microphone."
+        "Speak into the microphone and play PC audio."
+        if source_name == "both"
+        else (
+            "Play the broadcast on this PC."
+            if source_name == "system"
+            else "Speak into the microphone."
+        )
     )
     print(
         f"Live v2_light mode. source={source_name}. "
@@ -718,15 +784,43 @@ def run_v2_light(
         )
     )
 
-    def handle_action(action: StreamingAction) -> None:
+    def event_source_metadata(source_name: str) -> dict:
+        source_priority = (
+            0
+            if source_name == "microphone" or not microphone_priority
+            else 1
+        )
+        return {
+            "audio_source": source_name,
+            "audio_mode": source_mode,
+            "source_label": (
+                source_labels.get(source_name, source_name)
+                if source_mode == "both"
+                else ""
+            ),
+            "source_priority": source_priority,
+        }
+
+    def handle_action(
+        action: StreamingAction,
+        action_source: str,
+        action_scheduler: PendingWindowScheduler,
+    ) -> None:
         nonlocal discarded, processed
+        source_metadata = event_source_metadata(action_source)
         if action.action_type == "discarded_segment":
             discarded += 1
             admin_state.discarded_segment_count = discarded
             return
         if action.action_type == "pending_window" and action.window is not None:
-            streaming = config["streaming"]
+            streaming = source_configs[action_source]["streaming"]
             if not bool(streaming.get("pending_enabled", True)):
+                return
+            if (
+                source_mode == "both"
+                and action_source == "system"
+                and not bool(dual_config.get("system_pending_enabled", False))
+            ):
                 return
             if (
                 bool(streaming.get("pending_skip_when_busy", True))
@@ -740,6 +834,7 @@ def run_v2_light(
                 action.window.sample_rate,
                 action.window.start_offset_sec,
                 metadata={
+                    **source_metadata,
                     "window_start_offset_sec": action.window.start_offset_sec,
                     "window_end_offset_sec": action.window.end_offset_sec,
                     "window_duration_sec": action.window.duration_sec,
@@ -750,6 +845,7 @@ def run_v2_light(
             processed += 1
             admin_state.segment_count = processed
             admin_state.last_segment = {
+                **source_metadata,
                 "duration_sec": action.segment.duration_sec,
                 "peak_rms": action.segment.peak_rms,
                 "voice_ratio": action.segment.voice_ratio,
@@ -757,45 +853,53 @@ def run_v2_light(
                 "end_offset_sec": action.segment.end_offset_sec,
             }
             print(
-                "\nconfirmed segment #{idx}: {duration:.2f}s peak_rms={rms:.5f}".format(
+                "\nconfirmed {source} segment #{idx}: "
+                "{duration:.2f}s peak_rms={rms:.5f}".format(
+                    source=action_source,
                     idx=processed,
                     duration=action.segment.duration_sec,
                     rms=action.segment.peak_rms,
                 )
             )
+            sample_rate = int(source_configs[action_source]["audio"]["sample_rate"])
             stt_worker.submit(
                 "confirmed",
                 action.segment.samples,
-                config["audio"]["sample_rate"],
+                sample_rate,
                 action.segment.start_offset_sec,
                 metadata={
+                    **source_metadata,
                     "segment_duration_sec": action.segment.duration_sec,
                     "segment_peak_rms": action.segment.peak_rms,
                     "segment_voice_ratio": action.segment.voice_ratio,
                     "segment_start_offset_sec": action.segment.start_offset_sec,
                     "segment_end_offset_sec": action.segment.end_offset_sec,
                     "segment_start_sample": int(
-                        round(
-                            action.segment.start_offset_sec
-                            * config["audio"]["sample_rate"]
-                        )
+                        round(action.segment.start_offset_sec * sample_rate)
                     ),
                     "segment_end_sample": int(
-                        round(
-                            action.segment.end_offset_sec
-                            * config["audio"]["sample_rate"]
-                        )
+                        round(action.segment.end_offset_sec * sample_rate)
                     ),
-                    "capture_ring_end_sample": scheduler.ring.end_sample,
+                    "capture_ring_end_sample": action_scheduler.ring.end_sample,
                 },
             )
-
     try:
         for chunk in source.chunks(max_seconds=max_seconds):
+            chunk_source = str(
+                getattr(chunk, "source_name", "") or source_name
+            )
+            if chunk_source not in schedulers:
+                continue
+            scheduler = schedulers[chunk_source]
             actions = scheduler.push(chunk)
             decision = getattr(scheduler.segmenter, "last_decision", None)
-            source_restarts = int(getattr(source, "restart_count", 0))
-            source_last_error = str(getattr(source, "last_error", ""))
+            input_source = (
+                source.sources.get(chunk_source, source)
+                if source_mode == "both"
+                else source
+            )
+            source_restarts = int(getattr(input_source, "restart_count", 0))
+            source_last_error = str(getattr(input_source, "last_error", ""))
             info = {
                 "rms": chunk.rms,
                 "threshold": scheduler.segmenter.threshold,
@@ -804,14 +908,14 @@ def run_v2_light(
                 else chunk.rms >= scheduler.segmenter.threshold,
                 "offset_sec": chunk.offset_sec,
                 "duration_sec": chunk.duration_sec,
-                "dropped_chunks": source.dropped_chunks,
+                "dropped_chunks": int(getattr(input_source, "dropped_chunks", 0)),
                 "status": chunk.status,
                 "clip_fraction": chunk.clip_fraction,
-                "input_gain": source.input_gain,
-                "audio_source": getattr(source, "source_name", "microphone"),
+                "input_gain": float(getattr(input_source, "input_gain", 1.0)),
+                "audio_source": chunk_source,
                 "source_restarts": source_restarts,
                 "source_last_error": source_last_error,
-                "device_label": getattr(source, "device_label", ""),
+                "device_label": getattr(input_source, "device_label", ""),
                 "vad_engine": getattr(
                     decision,
                     "engine",
@@ -821,14 +925,23 @@ def run_v2_light(
                 "discard": None,
             }
             admin_state.last_audio = info
-            admin_state.audio_restart_count = source_restarts
+            admin_state.audio_sources[chunk_source] = info
+            if source_mode == "both" and hasattr(source, "source_statuses"):
+                for status_source, status_info in source.source_statuses().items():
+                    admin_state.audio_sources.setdefault(status_source, {}).update(
+                        status_info
+                    )
+            admin_state.audio_restart_count = int(
+                getattr(source, "restart_count", source_restarts)
+            )
             print_level(info)
             for action in actions:
                 if action.discard is not None:
                     info = {**info, "discard": action.discard}
                     admin_state.last_audio = info
+                    admin_state.audio_sources[chunk_source] = info
                     print_level(info)
-                handle_action(action)
+                handle_action(action, chunk_source, scheduler)
             for result in stt_worker.get_results():
                 emit_worker_result(result)
 
@@ -1034,8 +1147,9 @@ def run_v2_light(
         )
 
     if not stopped_by_user and pipeline_exit_code == 0:
-        for action in scheduler.flush():
-            handle_action(action)
+        for flush_source, flush_scheduler in schedulers.items():
+            for action in flush_scheduler.flush():
+                handle_action(action, flush_source, flush_scheduler)
         drain_timeout = max(
             float(
                 config["streaming"].get(
@@ -1079,6 +1193,11 @@ def run_v2_light(
                 ),
                 "audio_source_restarts": int(
                     getattr(source, "restart_count", 0)
+                ),
+                "audio_source_statuses": (
+                    source.source_statuses()
+                    if hasattr(source, "source_statuses")
+                    else {}
                 ),
                 "pipeline_exit_code": pipeline_exit_code,
             },
@@ -1257,7 +1376,7 @@ def main() -> int:
     parser.add_argument("--simulstreaming-experiment", action="store_true")
     parser.add_argument(
         "--audio-source",
-        choices=("microphone", "system"),
+        choices=("microphone", "system", "both"),
         help="Override audio.source for this run.",
     )
     args = parser.parse_args()

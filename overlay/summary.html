@@ -78,7 +78,7 @@
 </head>
 <body class="empty">
   <section class="summary-panel" aria-live="polite">
-    <div class="heading"><strong>지난 30분 요약</strong><span id="sessionState">실시간</span><span id="range">-</span></div>
+    <div class="heading"><strong id="bucketLabel">지난 30분 요약</strong><span id="sessionState">실시간</span><span id="range">-</span></div>
     <h1 id="headline">기록 없음</h1>
     <ol id="bullets"></ol>
   </section>
@@ -123,6 +123,7 @@
         };
       }
       const latest = await getJson("/api/archive/latest");
+      if (latest.bucket_minutes) document.getElementById("bucketLabel").textContent = `지난 ${latest.bucket_minutes}분 요약`;
       if (!latest.session) return null;
       const timeline = latest.timeline || [];
       const bucket = fixedBucket !== null

@@ -16,6 +16,7 @@ echo  5. Check audio devices
 echo  6. Validate latest broadcast
 echo  7. Make support bundle for Codex
 echo  8. Advanced tools
+echo  9. Start microphone + PC dual captions (beta)
 echo  0. Exit
 echo.
 echo  First run: choose 4 once, then choose 1.
@@ -31,6 +32,7 @@ if "%choice%"=="5" goto devices
 if "%choice%"=="6" goto validate
 if "%choice%"=="7" goto support
 if "%choice%"=="8" goto advanced
+if "%choice%"=="9" goto dual
 if "%choice%"=="0" goto end
 goto menu
 
@@ -68,6 +70,11 @@ goto menu
 
 :support
 call make_support_bundle.bat
+pause
+goto menu
+
+:dual
+call run_dual_input.bat
 pause
 goto menu
 

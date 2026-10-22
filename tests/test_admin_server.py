@@ -47,12 +47,7 @@ def main() -> int:
     assert "caption config unavailable" in caption_html
     assert "confirmedHistory" in caption_html
     assert "justChattingMode" in caption_html
-    assert "Math.min(\n            500," in caption_html.replace("\r\n", "\n")
     assert "themeLight" in admin_html and "themeDark" in admin_html
-    assert 'id="openCaptionPreview"' in admin_html
-    assert 'id="koSize" type="number" min="6" max="200"' in admin_html
-    assert 'id="maxLines" type="number" min="1" max="500"' in admin_html
-    assert '"/caption?preview=1"' in admin_html
     assert 'body[data-theme="dark"]' in theme_css
     print("admin_server_ok")
     return 0

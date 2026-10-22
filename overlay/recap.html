@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>구간 요약</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --panel: rgba(16, 19, 22, 0.9);
+      --text: #f7f9fa;
+      --muted: #b9c2c8;
+      --accent: #5ed1ae;
+      --line: rgba(255, 255, 255, 0.16);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 24px;
+      background: transparent;
+      color: var(--text);
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+      font-size: 22px;
+    }
+    body.position-top { align-items: flex-start; }
+    body.light {
+      --panel: rgba(255, 255, 255, 0.94);
+      --text: #15191d;
+      --muted: #5f6972;
+      --accent: #13715b;
+      --line: rgba(20, 25, 30, 0.15);
+    }
+    .stack { width: min(860px, 100%); display: flex; flex-direction: column; gap: 10px; }
+    .recap {
+      padding: 16px 22px 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+    .recap.older { opacity: 0.78; font-size: 0.86em; }
+    body.empty .stack { opacity: 0; transform: translateY(10px); }
+    .heading { display: flex; align-items: baseline; gap: 12px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+    .heading strong { color: var(--accent); font-size: 17px; }
+    .heading span { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+    .heading .method { margin-left: auto; font-size: 12px; }
+    h1 { margin: 11px 0 8px; font-size: 24px; line-height: 1.35; overflow-wrap: anywhere; }
+    .older h1 { font-size: 20px; }
+    ul { margin: 0; padding: 0; list-style: none; }
+    li { padding: 6px 0 6px 18px; position: relative; line-height: 1.45; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+    li:first-child { border-top: 0; }
+    li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
+    .progress { color: var(--muted); font-size: 14px; text-align: right; padding: 0 4px; }
+    @media (max-width: 640px) {
+      body { padding: 12px; font-size: 17px; }
+      .recap { padding: 13px 15px; }
+      h1 { font-size: 20px; }
+    }
+  </style>
+</head>
+<body class="empty">
+  <div class="stack" aria-live="polite">
+    <div id="recaps"></div>
+    <div class="progress" id="progress"></div>
+  </div>
+  <script>
+    // OBS browser source: http://127.0.0.1:8766/recap
+    // Options: ?count=2 (recaps shown) &theme=light &position=top &session_id=... &bullets=4
+    const params = new URLSearchParams(location.search);
+    const fixedSession = params.get("session_id") || "";
+    const count = Math.max(1, Math.min(Number(params.get("count") || 2), 4));
+    const bulletLimit = Math.max(1, Math.min(Number(params.get("bullets") || 4), 6));
+    if (params.get("theme") === "light") document.body.classList.add("light");
+    if (params.get("position") === "top") document.body.classList.add("position-top");
+    let bucketMinutes = 15;
+
+    function escapeHtml(value) {
+      return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    }
+    function formatOffset(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+      return [h, m, s].map((part) => String(part).padStart(2, "0")).join(":");
+    }
+    async function getJson(path) {
+      const response = await fetch(path, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }
+
+    async function refresh() {
+      try {
+        let sessionId = fixedSession;
+        let lastOffset = 0;
+        let ended = false;
+        const latest = await getJson("/api/archive/latest");
+        bucketMinutes = Number(latest.bucket_minutes || bucketMinutes);
+        if (!sessionId) {
+          if (!latest.session) { document.body.classList.add("empty"); return; }
+          sessionId = latest.session.id;
+        }
+        if (latest.session && latest.session.id === sessionId) {
+          lastOffset = Number(latest.session.last_offset_sec || 0);
+          ended = Boolean(latest.session.ended_at);
+        }
+        const data = await getJson(`/api/archive/recaps?session_id=${encodeURIComponent(sessionId)}&limit=${count}`);
+        const recaps = (data.recaps || []).slice(0, count);
+        if (!recaps.length) {
+          document.body.classList.add("empty");
+          return;
+        }
+        document.getElementById("recaps").innerHTML = recaps.map((recap, index) => {
+          const label = index === 0 ? (recap.partial ? "방송 마지막 구간" : `지난 ${bucketMinutes}분`) : `그 전 ${bucketMinutes}분`;
+          const bullets = (recap.bullets || []).slice(0, index === 0 ? bulletLimit : Math.max(1, bulletLimit - 1));
+          const method = String(recap.method || "").startsWith("llm_") ? "AI 요약" : "키워드 요약";
+          return `<section class="recap ${index === 0 ? "" : "older"}">
+            <div class="heading"><strong>${escapeHtml(label)}</strong><span>${formatOffset(recap.window_start_sec)}–${formatOffset(recap.window_end_sec)}</span><span class="method">${method}</span></div>
+            <h1>${escapeHtml(recap.headline || "주요 대화")}</h1>
+            <ul>${bullets.map((text) => `<li>${escapeHtml(text)}</li>`).join("")}</ul>
+          </section>`;
+        }).join("");
+        const bucketSeconds = bucketMinutes * 60;
+        const into = Math.max(0, lastOffset - Math.floor(lastOffset / bucketSeconds) * bucketSeconds);
+        document.getElementById("progress").textContent = ended ? "방송 종료" : `현재 구간 ${Math.floor(into / 60)}분 경과 · 다음 요약까지 ${Math.max(0, Math.ceil((bucketSeconds - into) / 60))}분`;
+        document.body.classList.remove("empty");
+      } catch (_error) {
+        document.body.classList.add("empty");
+      }
+    }
+
+    let eventRefreshTimer = null;
+    function scheduleEventRefresh() {
+      clearTimeout(eventRefreshTimer);
+      eventRefreshTimer = setTimeout(refresh, 250);
+    }
+    function handleMessage(payload) {
+      const items = payload.type === "sync" ? (payload.items || []) : [payload];
+      for (const item of items) {
+        if (item.type !== "recap_updated" && item.type !== "broadcast_ended") continue;
+        const sessionId = item.metadata?.session_id || "";
+        if (fixedSession && sessionId !== fixedSession) continue;
+        scheduleEventRefresh();
+      }
+    }
+    async function connectEvents() {
+      try {
+        const config = await getJson("/api/config");
+        const port = Number(config.server?.port || 8765);
+        const socket = new WebSocket("ws://" + (location.hostname || "127.0.0.1") + ":" + port);
+        socket.addEventListener("message", (event) => { try { handleMessage(JSON.parse(event.data)); } catch (_error) { return; } });
+        socket.addEventListener("close", () => setTimeout(connectEvents, 1000));
+      } catch (_error) {
+        setTimeout(connectEvents, 2000);
+      }
+    }
+
+    refresh();
+    connectEvents();
+    setInterval(refresh, 20000);
+  </script>
+</body>
+</html>

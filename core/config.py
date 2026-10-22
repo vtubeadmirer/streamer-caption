@@ -40,6 +40,9 @@ DEFAULTS: dict[str, Any] = {
         "position": "bottom_center",
         "font": "Malgun Gothic",
         "hold_time_auto": True,
+        "show_source_labels": True,
+        "microphone_label": "방송자",
+        "system_label": "컴퓨터",
     },
     "whisper": {
         "model": "large-v3",
@@ -69,6 +72,19 @@ DEFAULTS: dict[str, Any] = {
         "device": 1,
         "vad_energy_threshold": 0.015,
         "input_gain": 1.0,
+        "microphone_input_gain": 1.0,
+        "system_input_gain": 1.0,
+        "microphone_vad_energy_threshold": 0.015,
+        "system_vad_energy_threshold": 0.02,
+        "microphone_min_segment_peak_rms": 0.012,
+        "system_min_segment_peak_rms": 0.015,
+        "dual": {
+            "microphone_priority": True,
+            "system_pending_enabled": False,
+            "echo_suppression_enabled": True,
+            "echo_window_sec": 1.5,
+            "echo_similarity": 0.88,
+        },
         "min_segment_peak_rms": 0.012,
         "pre_roll_sec": 0.3,
         "silence_duration_sec": 0.7,
@@ -180,6 +196,20 @@ DEFAULTS: dict[str, Any] = {
         "live_analysis_every_captions": 8,
         "live_analysis_min_interval_sec": 15,
         "auto_report_on_close": True,
+        "recap": {
+            "enabled": True,
+            "provider": "auto",
+            "max_bullets": 4,
+            "min_captions": 3,
+            "timeout_sec": 60,
+            "max_transcript_chars": 7000,
+            "ollama_url": "http://127.0.0.1:11434",
+            "ollama_model": "",
+            "openai_base_url": "",
+            "openai_model": "",
+            "openai_api_key_env": "OPENAI_API_KEY",
+            "cli_command": "",
+        },
     },
     "log": {"dir": "logs"},
 }
@@ -192,6 +222,9 @@ CONFIG_LIFETIME: dict[str, str] = {
     "caption.just_chatting_min_line_hold_sec": "hot",
     "caption.prev_opacity": "hot",
     "caption.max_chars_per_line": "cold",
+    "caption.show_source_labels": "hot",
+    "caption.microphone_label": "hot",
+    "caption.system_label": "hot",
     "app.mode": "cold",
     "whisper.model": "cold",
     "whisper.device": "cold",
@@ -206,6 +239,17 @@ CONFIG_LIFETIME: dict[str, str] = {
     "audio.device": "cold",
     "audio.vad_energy_threshold": "cold",
     "audio.input_gain": "cold",
+    "audio.microphone_input_gain": "cold",
+    "audio.system_input_gain": "cold",
+    "audio.microphone_vad_energy_threshold": "cold",
+    "audio.system_vad_energy_threshold": "cold",
+    "audio.microphone_min_segment_peak_rms": "cold",
+    "audio.system_min_segment_peak_rms": "cold",
+    "audio.dual.microphone_priority": "cold",
+    "audio.dual.system_pending_enabled": "cold",
+    "audio.dual.echo_suppression_enabled": "cold",
+    "audio.dual.echo_window_sec": "cold",
+    "audio.dual.echo_similarity": "cold",
     "audio.min_segment_peak_rms": "cold",
     "audio.pre_roll_sec": "cold",
     "audio.silence_duration_sec": "cold",
@@ -268,6 +312,18 @@ CONFIG_LIFETIME: dict[str, str] = {
     "archive.live_analysis_every_captions": "cold",
     "archive.live_analysis_min_interval_sec": "cold",
     "archive.auto_report_on_close": "cold",
+    "archive.recap.enabled": "cold",
+    "archive.recap.provider": "cold",
+    "archive.recap.max_bullets": "cold",
+    "archive.recap.min_captions": "cold",
+    "archive.recap.timeout_sec": "cold",
+    "archive.recap.max_transcript_chars": "cold",
+    "archive.recap.ollama_url": "cold",
+    "archive.recap.ollama_model": "cold",
+    "archive.recap.openai_base_url": "cold",
+    "archive.recap.openai_model": "cold",
+    "archive.recap.openai_api_key_env": "cold",
+    "archive.recap.cli_command": "cold",
 }
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -348,8 +404,8 @@ def validate_config(config: dict[str, Any]) -> None:
     for key in ("pending_enabled", "pending_skip_when_busy"):
         if not isinstance(config["streaming"].get(key), bool):
             raise TypeError(f"streaming.{key} must be boolean")
-    if config["audio"].get("source") not in {"microphone", "system"}:
-        raise ValueError("audio.source must be microphone or system")
+    if config["audio"].get("source") not in {"microphone", "system", "both"}:
+        raise ValueError("audio.source must be microphone, system, or both")
     _bounded_number(config, "audio", "source_stall_timeout_sec", 1, 30)
     _bounded_number(config, "audio", "source_retry_delay_sec", 0.1, 30)
     _bounded_number(config, "audio", "source_max_restarts", 0, 100)
@@ -357,6 +413,32 @@ def validate_config(config: dict[str, Any]) -> None:
     _bounded_number(config, "audio", "block_size", 128, 8192)
     _bounded_number(config, "audio", "vad_energy_threshold", 0, 1)
     _bounded_number(config, "audio", "input_gain", 0.1, 20)
+    for key in (
+        "microphone_input_gain",
+        "system_input_gain",
+    ):
+        _bounded_number(config, "audio", key, 0.1, 20)
+    for key in (
+        "microphone_vad_energy_threshold",
+        "system_vad_energy_threshold",
+        "microphone_min_segment_peak_rms",
+        "system_min_segment_peak_rms",
+    ):
+        _bounded_number(config, "audio", key, 0, 1)
+    dual = config["audio"].get("dual", {})
+    for key in (
+        "microphone_priority",
+        "system_pending_enabled",
+        "echo_suppression_enabled",
+    ):
+        if not isinstance(dual.get(key), bool):
+            raise TypeError(f"audio.dual.{key} must be boolean")
+    echo_window = float(dual.get("echo_window_sec", 1.5))
+    if not 0.1 <= echo_window <= 10:
+        raise ValueError("audio.dual.echo_window_sec must be between 0.1 and 10")
+    echo_similarity = float(dual.get("echo_similarity", 0.88))
+    if not 0.5 <= echo_similarity <= 1:
+        raise ValueError("audio.dual.echo_similarity must be between 0.5 and 1")
     _bounded_number(config, "audio", "min_segment_peak_rms", 0, 1)
     _bounded_number(config, "audio", "pre_roll_sec", 0, 2)
     _bounded_number(config, "audio", "silence_duration_sec", 0.1, 5)
@@ -478,6 +560,18 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     if int(bucket_minutes) != bucket_minutes:
         raise ValueError("archive.bucket_minutes must be an integer")
+    recap = config["archive"].get("recap")
+    if not isinstance(recap, dict):
+        raise TypeError("archive.recap must be an object")
+    if not isinstance(recap.get("enabled", True), bool):
+        raise TypeError("archive.recap.enabled must be boolean")
+    provider = str(recap.get("provider", "auto")).lower()
+    if provider not in {"auto", "none", "extractive", "off", "ollama", "openai", "cli"}:
+        raise ValueError("archive.recap.provider must be auto, none, ollama, openai or cli")
+    for key, low, high in (("max_bullets", 1, 6), ("min_captions", 1, 50), ("timeout_sec", 5, 600), ("max_transcript_chars", 1000, 50000)):
+        value = recap.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not (low <= float(value) <= high):
+            raise ValueError(f"archive.recap.{key} must be between {low} and {high}")
     summary_bullets = _bounded_number(
         config, "archive", "summary_max_bullets", 1, 10
     )

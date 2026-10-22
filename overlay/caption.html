@@ -24,13 +24,6 @@
     }
     body.preview {
       background: #111;
-      overflow-y: auto;
-    }
-    body.preview .stage {
-      position: relative;
-      inset: auto;
-      min-height: 100%;
-      height: auto;
     }
     .stage {
       position: fixed;
@@ -66,6 +59,15 @@
     .line.pending {
       color: var(--pending);
     }
+    .source-label {
+      display: inline-block;
+      margin-right: 0.35em;
+      font-size: 0.58em;
+      font-weight: 800;
+      vertical-align: 0.12em;
+    }
+    .source-microphone .source-label { color: #49d89b; }
+    .source-system .source-label { color: #67b7ff; }
     .pending-slot:not(:empty) {
       margin-top: 0.08em;
     }
@@ -99,6 +101,7 @@
     const pendingCaption = document.getElementById("pendingCaption");
     const statusEl = document.getElementById("status");
     const params = new URLSearchParams(location.search);
+    const sourceFilter = String(params.get("source") || "both").toLowerCase();
     if (params.get("preview") !== "0") document.body.classList.add("preview");
 
     let confirmedHistory = [];
@@ -108,9 +111,13 @@
     let queuedConfirmedContentKeys = new Set();
     let seenConfirmedContentKeys = new Set();
     let pendingText = "";
+    let pendingSource = "";
+    let pendingSourceLabel = "";
     let lastPendingKey = "";
-    let lastPendingOffset = -1;
-    let lastConfirmedOffset = -1;
+    let lastPendingOffsets = { microphone: -1, system: -1 };
+    let lastConfirmedOffsets = { microphone: -1, system: -1 };
+    let showSourceLabels = true;
+    let sourceLabels = { microphone: "방송자", system: "컴퓨터" };
     let lastConfirmedAt = 0;
     let lastConfirmedCommitAt = 0;
     let lastPendingAt = 0;
@@ -147,6 +154,11 @@
         const config = await response.json();
         const captionConfig = config.caption || {};
         const streamingConfig = config.streaming || {};
+        showSourceLabels = captionConfig.show_source_labels !== false;
+        sourceLabels = {
+          microphone: String(captionConfig.microphone_label || "방송자"),
+          system: String(captionConfig.system_label || "컴퓨터"),
+        };
         const configuredSize = Number(captionConfig.ko_size || 34);
         const sizeParam = Number(
           params.get("size") || params.get("koSize") || 0
@@ -200,6 +212,9 @@
           nextPendingStaleMs,
           sizeParam || configuredSize,
           captionConfig.prev_opacity ?? 0.55,
+          showSourceLabels,
+          sourceLabels.microphone,
+          sourceLabels.system,
         ].join("|");
 
         maxLines = nextMaxLines;
@@ -243,13 +258,34 @@
       );
     }
 
+    function messageSource(message) {
+      const source = String(
+        message?.metadata?.audio_source || "microphone"
+      ).toLowerCase();
+      return source === "system" ? "system" : "microphone";
+    }
+
+    function acceptsSource(source) {
+      return !["microphone", "system"].includes(sourceFilter)
+        || sourceFilter === source;
+    }
+
+    function sourceLabelHtml(source, label) {
+      if (!showSourceLabels || sourceFilter !== "both") return "";
+      return '<span class="source-label">['
+        + escapeHtml(label || sourceLabels[source] || source)
+        + "]</span>";
+    }
+
     function renderConfirmed() {
       const confirmedLines = confirmedHistory.slice(-maxLines);
       confirmedCaption.innerHTML = confirmedLines.map((entry, index) => {
         const className = index === confirmedLines.length - 1
           ? "current"
           : "previous";
-        return '<div class="line ' + className + '">'
+        return '<div class="line ' + className
+          + ' source-' + escapeHtml(entry.source) + '">'
+          + sourceLabelHtml(entry.source, entry.sourceLabel)
           + escapeHtml(entry.text)
           + "</div>";
       }).join("");
@@ -258,7 +294,8 @@
 
     function renderPending() {
       pendingCaption.innerHTML = pendingText
-        ? '<div class="line pending">'
+        ? '<div class="line pending source-' + escapeHtml(pendingSource) + '">'
+          + sourceLabelHtml(pendingSource, pendingSourceLabel)
           + escapeHtml(pendingText)
           + "</div>"
         : "";
@@ -270,7 +307,6 @@
       renderPending();
       updateStatus();
     }
-
     function scheduleTimers() {
       clearTimeout(hideTimer);
       clearTimeout(pendingTimer);
@@ -373,20 +409,29 @@
     function enqueueConfirmed(message) {
       const text = String(message.text || "").trim();
       if (!text) return;
+      const source = messageSource(message);
+      if (!acceptsSource(source)) return;
       const offset = Number(
-        message.audio_offset_sec ?? lastConfirmedOffset
+        message.audio_offset_sec ?? lastConfirmedOffsets[source]
       );
-      if (offset < lastConfirmedOffset) return;
-      lastConfirmedOffset = Math.max(lastConfirmedOffset, offset);
+      if (offset < lastConfirmedOffsets[source]) return;
+      lastConfirmedOffsets[source] = Math.max(
+        lastConfirmedOffsets[source],
+        offset
+      );
       const metadata = message.metadata || {};
+      const sourceLabel = String(
+        metadata.source_label || sourceLabels[source] || source
+      );
       const splitIndex = metadata.split_index ?? "";
       const key = [
+        source,
         offset.toFixed(3),
         splitIndex,
         text,
       ].join(":");
-      const batchKey = offset.toFixed(3);
-      const contentKey = [batchKey, text].join(":");
+      const batchKey = [source, offset.toFixed(3)].join(":");
+      const contentKey = [source, offset.toFixed(3), text].join(":");
       if (
         queuedConfirmedKeys.has(key)
         || seenConfirmedKeys.has(key)
@@ -396,17 +441,28 @@
         return;
       }
 
-      pendingText = "";
-      lastPendingKey = "";
-      renderPending();
-      confirmedQueue.push({ key, contentKey, batchKey, text, offset });
+      if (pendingSource === source) {
+        pendingText = "";
+        pendingSource = "";
+        pendingSourceLabel = "";
+        lastPendingKey = "";
+        renderPending();
+      }
+      confirmedQueue.push({
+        key,
+        contentKey,
+        batchKey,
+        text,
+        offset,
+        source,
+        sourceLabel,
+      });
       queuedConfirmedKeys.add(key);
       queuedConfirmedContentKeys.add(contentKey);
       updateVisibility();
       updateStatus();
       drainConfirmedQueue();
     }
-
     function applyMessage(message) {
       if (message.type === "sync") {
         for (const item of message.items || []) applyMessage(item);
@@ -420,35 +476,46 @@
         return;
       }
       if (message.type === "caption_pending") {
+        const source = messageSource(message);
+        if (!acceptsSource(source)) return;
         const text = String(message.text || "").trim();
         const offset = Number(message.audio_offset_sec ?? 0);
-        const key = [offset.toFixed(2), text].join(":");
+        const key = [source, offset.toFixed(2), text].join(":");
         if (
           !text
           || key === lastPendingKey
-          || offset < lastPendingOffset
-          || offset <= lastConfirmedOffset
+          || offset < lastPendingOffsets[source]
+          || offset <= lastConfirmedOffsets[source]
         ) {
           return;
         }
         lastPendingKey = key;
-        lastPendingOffset = offset;
+        lastPendingOffsets[source] = offset;
         pendingText = text;
+        pendingSource = source;
+        pendingSourceLabel = String(
+          message.metadata?.source_label || sourceLabels[source] || source
+        );
         lastPendingAt = Date.now();
         renderPending();
         scheduleTimers();
         return;
       }
       if (message.type === "caption_hidden") {
+        const source = messageSource(message);
         const offset = Number(message.audio_offset_sec ?? 0);
-        if (offset >= lastPendingOffset) {
+        if (
+          pendingSource === source
+          && offset >= lastPendingOffsets[source]
+        ) {
           pendingText = "";
+          pendingSource = "";
+          pendingSourceLabel = "";
           renderPending();
           scheduleTimers();
         }
       }
     }
-
     function updateStatus() {
       if (!connected) return;
       statusEl.textContent = confirmedQueue.length

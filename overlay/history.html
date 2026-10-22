@@ -221,6 +221,7 @@
     .caption-row.flash { background: var(--accent-soft); }
     .caption-time { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; }
     .caption-text { min-width: 0; line-height: 1.65; overflow-wrap: anywhere; }
+    .source-badge { display: inline-block; margin-right: 7px; color: var(--accent); font-size: 11px; font-weight: 800; }
     mark { background: #ffdf75; color: #201b0d; padding: 0 2px; }
     .empty {
       min-height: 220px;
@@ -672,7 +673,11 @@
             text = `${escapeHtml(raw.slice(0, index))}<mark>${escapeHtml(raw.slice(index, index + query.length))}</mark>${escapeHtml(raw.slice(index + query.length))}`;
           }
         }
-        return `<button class="caption-row" type="button" data-id="${caption.id}" data-bucket="${caption.bucket_index}"><span class="caption-time">${formatOffset(caption.offset_sec)}</span><span class="caption-text">${text}</span></button>`;
+        const sourceLabel = String(caption.metadata?.source_label || "").trim();
+        const sourceBadge = sourceLabel
+          ? `<span class="source-badge">[${escapeHtml(sourceLabel)}]</span>`
+          : "";
+        return `<button class="caption-row" type="button" data-id="${caption.id}" data-bucket="${caption.bucket_index}"><span class="caption-time">${formatOffset(caption.offset_sec)}</span><span class="caption-text">${sourceBadge}${text}</span></button>`;
       }).join("");
       for (const row of transcriptList.querySelectorAll(".caption-row")) {
         row.addEventListener("click", () => {

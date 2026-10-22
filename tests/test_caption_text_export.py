@@ -65,6 +65,7 @@ def main() -> int:
             offset_sec=3661.9,
             confidence=0.95,
             engine="test",
+            metadata={"audio_source": "system", "source_label": "컴퓨터"},
         )
         config = copy.deepcopy(load_config())
         config["archive"]["db_path"] = str(db_path)
@@ -87,7 +88,7 @@ def main() -> int:
             server.stop()
 
         assert 'id="downloadTranscript"' in history_html
-        assert body == "[01:01:01] 과거 방송 자막도 저장됩니다.\n"
+        assert body == "[01:01:01] [컴퓨터] 과거 방송 자막도 저장됩니다.\n"
         assert disposition == 'attachment; filename="text-api_captions.txt"'
         assert content_type == "text/plain; charset=utf-8"
 

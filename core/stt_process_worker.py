@@ -9,7 +9,7 @@ from dataclasses import replace
 from typing import Any, Iterable
 
 from core.events import CaptionEvent
-from core.stt_worker import SttJob, SttResult
+from core.stt_worker import SttJob, SttResult, enqueue_confirmed_by_priority
 
 
 class _EchoEngine:
@@ -268,7 +268,7 @@ class ProcessSttWorker:
                 self.dropped_jobs += superseded
                 self.superseded_pending_jobs += superseded
                 self._pending_jobs.clear()
-                self._confirmed_jobs.append(job)
+                enqueue_confirmed_by_priority(self._confirmed_jobs, job)
             else:
                 if len(self._pending_jobs) >= self.max_queue:
                     if not drop_oldest:

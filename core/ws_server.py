@@ -47,6 +47,7 @@ class CaptionWebSocketServer:
         elif event.event_type in {
             "summary_updated",
             "topic_changed",
+            "recap_updated",
             "broadcast_ended",
         }:
             self._cache_analysis(event.event_type, message)
@@ -155,7 +156,11 @@ class CaptionWebSocketServer:
                 "metadata": event.metadata,
             }
         if event.event_type == "caption_hidden":
-            return {"type": "caption_hidden"}
+            return {
+                "type": "caption_hidden",
+                "audio_offset_sec": event.audio_offset_sec,
+                "metadata": event.metadata,
+            }
         return {
             "type": event.event_type,
             "text": event.text,

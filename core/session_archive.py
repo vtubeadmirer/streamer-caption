@@ -35,6 +35,7 @@ class SessionArchiveRecorder:
         self.recovered_sessions: list[dict[str, Any]] = []
         self.analysis_sink = analysis_sink
         self.live_analysis: Any | None = None
+        self.recap_worker: Any | None = None
         self.last_confirmed_offset = 0.0
         if not self.enabled:
             return
@@ -77,6 +78,18 @@ class SessionArchiveRecorder:
                     self._record_analysis_event,
                 )
                 self.live_analysis.start()
+            if bool(
+                dict(archive_config.get("recap", {}) or {}).get("enabled", True)
+            ):
+                from features.recap import RecapWorker
+
+                self.recap_worker = RecapWorker(
+                    config,
+                    self.session_id,
+                    self.store,
+                    self._record_analysis_event,
+                )
+                self.recap_worker.start()
         except Exception as exc:
             self._record_error(exc)
             self.enabled = False
@@ -111,6 +124,8 @@ class SessionArchiveRecorder:
             )
             if self.live_analysis is not None:
                 self.live_analysis.submit(event.audio_offset_sec)
+            if self.recap_worker is not None:
+                self.recap_worker.submit(event.audio_offset_sec)
         except Exception as exc:
             self._record_error(exc)
 
@@ -131,6 +146,13 @@ class SessionArchiveRecorder:
                 close_metadata["live_analysis"] = (
                     self.live_analysis.snapshot()
                 )
+            if self.recap_worker is not None:
+                self.recap_worker.finalize(self.last_confirmed_offset)
+                if not self.recap_worker.stop(timeout=25.0):
+                    self._record_error(
+                        RuntimeError("recap worker did not stop within 25 seconds")
+                    )
+                close_metadata["recap"] = self.recap_worker.snapshot()
             self.store.close_session(
                 self.session_id,
                 metadata=close_metadata,

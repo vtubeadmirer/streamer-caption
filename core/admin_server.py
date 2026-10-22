@@ -33,6 +33,7 @@ class AdminState:
         self.degraded_mode = False
         self.last_memory: dict[str, Any] = {}
         self.last_audio: dict[str, Any] = {}
+        self.audio_sources: dict[str, dict[str, Any]] = {}
         self.last_segment: dict[str, Any] = {}
         self.last_stt: dict[str, Any] = {}
 
@@ -51,6 +52,7 @@ class AdminState:
             "degraded_mode": self.degraded_mode,
             "last_memory": self.last_memory,
             "last_audio": self.last_audio,
+            "audio_sources": self.audio_sources,
             "last_segment": self.last_segment,
             "last_stt": self.last_stt,
         }
@@ -113,6 +115,9 @@ class AdminServer:
                     return
                 if path in {"/history", "/history.html"}:
                     self._send_file(PROJECT_ROOT / "overlay" / "history.html", "text/html; charset=utf-8")
+                    return
+                if path in {"/recap", "/recap.html"}:
+                    self._send_file(PROJECT_ROOT / "overlay" / "recap.html", "text/html; charset=utf-8")
                     return
                 if path in {"/summary", "/summary.html"}:
                     self._send_file(PROJECT_ROOT / "overlay" / "summary.html", "text/html; charset=utf-8")
@@ -279,9 +284,14 @@ class AdminServer:
                             total_seconds = max(0, int(float(caption["offset_sec"])))
                             hours, remainder = divmod(total_seconds, 3600)
                             minutes, seconds = divmod(remainder, 60)
+                            metadata = caption.get("metadata") or {}
+                            source_label = str(
+                                metadata.get("source_label", "")
+                            ).strip()
+                            prefix = f"[{source_label}] " if source_label else ""
                             lines.append(
                                 f"[{hours:02d}:{minutes:02d}:{seconds:02d}] "
-                                f"{str(caption['text']).strip()}"
+                                f"{prefix}{str(caption['text']).strip()}"
                             )
                         body = ("\ufeff" + "\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
                         safe_id = "".join(
@@ -316,6 +326,20 @@ class AdminServer:
                             {
                                 "sessions": archive.list_sessions(limit=limit),
                                 "bucket_minutes": archive.bucket_minutes,
+                            }
+                        )
+                        return
+                    if path == "/api/archive/recaps":
+                        session_id = self._query_value(query, "session_id", "")
+                        if not session_id:
+                            latest = archive.latest_session()
+                            session_id = str(latest["id"]) if latest else ""
+                        limit = self._query_int(query, "limit", 10, 1, 200)
+                        self._send_json(
+                            {
+                                "session_id": session_id,
+                                "bucket_minutes": archive.bucket_minutes,
+                                "recaps": archive.list_recaps(session_id, limit=limit) if session_id else [],
                             }
                         )
                         return

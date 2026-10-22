@@ -17,7 +17,6 @@
       </div>
       <a href="/history" class="status"><span class="ko-text">&#48169;&#49569; &#44592;&#47197;</span><span class="en-text">History</span></a>
       <a href="/validate" class="status"><span class="ko-text">방송 검증</span><span class="en-text">Validation</span></a>
-      <button id="openCaptionPreview" type="button" class="status"><span class="ko-text">자막 미리보기</span><span class="en-text">Caption Preview</span></button>
       <a href="#guide" class="status">사용 안내</a>
       <div id="saveState" class="status">loading</div>
     </div>
@@ -56,6 +55,7 @@
           <select id="audioSource">
             <option value="microphone">&#47560;&#51060;&#53356; / Microphone</option>
             <option value="system">PC &#51116;&#49373;&#51020; / PC playback</option>
+            <option value="both">마이크 + PC 재생음 / Dual input</option>
           </select>
         </label>
         <label id="microphoneDeviceField"><span class="hint" title="마이크 장치 번호입니다. 다른 PC에서는 번호가 달라질 수 있습니다.">마이크 장치</span>
@@ -74,7 +74,27 @@
         <label><span class="hint" title="마이크 입력을 내부적으로 키우는 값입니다. 너무 높이면 잡음도 같이 커집니다.">입력 증폭</span>
           <input id="inputGain" type="number" min="0.1" max="20" step="0.1">
         </label>
-        <label><span class="hint" title="이 값보다 작은 소리 조각은 자막 처리하지 않습니다. 작은 말이 누락되면 낮춰보세요.">최소 음성 피크</span>
+        <div id="dualAudioSettings" hidden>
+          <p class="help"><span class="ko-text">동시 입력에서는 두 소스의 음량과 감도를 따로 조정합니다. 마이크 자막을 우선 처리하고 PC 임시 자막은 기본적으로 끕니다.</span><span class="en-text">Dual input tunes each source separately. Microphone finals have priority and PC pending captions are off by default.</span></p>
+          <label><span class="hint" title="동시 입력에서 방송자 마이크에만 적용되는 증폭입니다."><span class="ko-text">마이크 증폭</span><span class="en-text">Microphone gain</span></span>
+            <input id="microphoneInputGain" type="number" min="0.1" max="20" step="0.1">
+          </label>
+          <label><span class="hint" title="동시 입력에서 PC 재생음에만 적용되는 증폭입니다."><span class="ko-text">PC 재생음 증폭</span><span class="en-text">PC playback gain</span></span>
+            <input id="systemInputGain" type="number" min="0.1" max="20" step="0.1">
+          </label>
+          <label><span class="hint" title="동시 입력에서 마이크 Energy VAD 감도입니다. 낮을수록 작은 목소리를 더 잘 잡습니다."><span class="ko-text">마이크 VAD 기준값</span><span class="en-text">Microphone VAD threshold</span></span>
+            <input id="microphoneVadThreshold" type="number" min="0" max="1" step="0.001">
+          </label>
+          <label><span class="hint" title="동시 입력에서 PC 소리 Energy VAD 감도입니다. 음악 오탐이 많으면 높이세요."><span class="ko-text">PC 재생음 VAD 기준값</span><span class="en-text">PC playback VAD threshold</span></span>
+            <input id="systemVadThreshold" type="number" min="0" max="1" step="0.001">
+          </label>
+          <label><span class="hint" title="마이크가 스피커 소리를 다시 받아 같은 문장이 두 번 뜨는 현상을 줄입니다."><span class="ko-text">교차 입력 중복 억제</span><span class="en-text">Cross-source duplicate suppression</span></span>
+            <select id="echoSuppression"><option value="true">켜기 / On</option><option value="false">끄기 / Off</option></select>
+          </label>
+          <label><span class="hint" title="PC 재생음의 회색 임시 자막까지 표시합니다. 4060 Ti에서는 끄기를 권장합니다."><span class="ko-text">PC 임시 자막</span><span class="en-text">PC pending captions</span></span>
+            <select id="systemPending"><option value="false">끄기 / Off</option><option value="true">켜기 / On</option></select>
+          </label>
+        </div>        <label><span class="hint" title="이 값보다 작은 소리 조각은 자막 처리하지 않습니다. 작은 말이 누락되면 낮춰보세요.">최소 음성 피크</span>
           <input id="minPeakRms" type="number" min="0" max="1" step="0.001">
         </label>
         <label><span class="hint" title="Silero가 권장값입니다. Energy는 단순 소리 크기 기반입니다.">VAD 엔진</span>
@@ -104,9 +124,9 @@
           </select>
         </label>
         <label><span class="hint" title="자막 글자 크기입니다. 30~36 정도가 일반적이고, 아주 작게는 6까지 줄일 수 있습니다. 저장하면 자막 화면에 약 1초 안에 반영됩니다.">한글 크기</span>
-          <input id="koSize" type="number" min="6" max="200" step="1">
+          <input id="koSize" type="number" min="6" max="96" step="1">
         </label>
-        <label><span class="hint" title="보관하며 표시할 자막 줄 수입니다. 최대 500줄까지 설정할 수 있습니다. OBS 화면에는 해상도에 들어오는 줄만 보이며, 관리자 미리보기 창에서는 스크롤할 수 있습니다.">최대 줄 수</span>
+        <label><span class="hint" title="화면에 동시에 보여줄 자막 줄 수입니다. 일반 자막은 2줄, 저스트 채팅 모드는 6~50줄을 권장합니다. 최대 500줄까지 유지할 수 있습니다.">최대 줄 수</span>
           <input id="maxLines" type="number" min="1" max="500" step="1">
         </label>
         <label><span class="hint" title="한 자막 조각의 최대 글자 수입니다. 낮추면 긴 말이 더 짧게 잘립니다.">한 줄 글자 수</span>
@@ -121,7 +141,15 @@
         <label><span class="hint" title="저스트 채팅 모드에서 새 확정 줄이 위로 올라오는 최소 간격입니다. 0은 즉시, 빠른 말은 0.5~0.9초를 권장합니다. 8줄·0.65초면 가장 위 줄이 약 5초 이상 유지됩니다. / Minimum advance interval for fast speech."><span class="ko-text">빠른 말 읽기 보호(초)</span><span class="en-text">Fast speech reading hold</span></span>
           <input id="justChattingLineHold" type="number" min="0" max="5" step="0.05">
         </label>
-        <button id="saveCaption" class="primary">자막 저장</button>
+        <label><span class="hint" title="통합 자막에서 [방송자], [컴퓨터] 출처 표시를 켜거나 끕니다."><span class="ko-text">입력 출처 표시</span><span class="en-text">Show source labels</span></span>
+          <select id="showSourceLabels"><option value="true">켜기 / On</option><option value="false">끄기 / Off</option></select>
+        </label>
+        <label><span class="hint" title="마이크 자막 앞에 표시할 이름입니다."><span class="ko-text">마이크 표시 이름</span><span class="en-text">Microphone label</span></span>
+          <input id="microphoneLabel" type="text" maxlength="20">
+        </label>
+        <label><span class="hint" title="PC 재생음 자막 앞에 표시할 이름입니다."><span class="ko-text">PC 표시 이름</span><span class="en-text">PC label</span></span>
+          <input id="systemLabel" type="text" maxlength="20">
+        </label>        <button id="saveCaption" class="primary">자막 저장</button>
       </section>
       <section>
         <h2><span class="ko-text">실시간 처리</span><span class="en-text">Streaming</span></h2>
@@ -262,7 +290,7 @@
           <ol class="guide-steps">
             <li><span class="ko-text"><b>장치와 프로필:</b> START_HERE의 <b>4번 RTX 40/50 시리즈 자동 설정</b>을 먼저 실행한 뒤 실제 사용할 마이크를 선택합니다. 특정 모델명이 달라도 RTX 40/50 계열이면 이 자동 설정으로 시작하면 됩니다.</span><span class="en-text"><b>Device and profile:</b> Run START_HERE option <b>4 Auto GPU preset for RTX 40/50 Series</b> first, then select the microphone you will use. Start here even if your exact GPU model name is different.</span></li>
             <li><span class="ko-text"><b>오디오 탭:</b> VAD 엔진은 <b>Silero</b>, 음성 기준은 <b>0.5</b>, 시작 여유 시간은 <b>0.3초</b>에서 시작합니다.</span><span class="en-text"><b>Audio tab:</b> Start with Silero, threshold 0.5, and pre-roll 0.3 seconds.</span></li>
-            <li><span class="ko-text"><b>자막 탭:</b> 일반 방송은 크기 30~36, 최대 2줄, 한 줄 22~28자로 시작합니다. 필요하면 글자 크기는 6까지, 최대 줄 수는 500까지 설정할 수 있습니다. 대화를 오래 남기려면 저스트 채팅 모드와 8~12줄부터 사용하고, 상단의 <b>자막 미리보기</b> 버튼으로 새 창에서 스크롤해 확인합니다. 낮은 지연은 <b>빠른 말 읽기 보호</b>를 0.2초로 시작하고, 위쪽 자막을 더 오래 읽으려면 0.5~0.9초로 올립니다.</span><span class="en-text"><b>Caption tab:</b> Start with size 30–36, 2 lines, and 22–28 characters. Size can be reduced to 6 and maximum lines can be raised to 500. Use Just Chatting with 8–12 lines first, then open the scrollable window with Caption Preview in the header. Start Fast speech reading hold at 0.2 seconds for low latency, or raise it to 0.5–0.9 seconds for longer reading time.</span></li>
+            <li><span class="ko-text"><b>자막 탭:</b> 일반 방송은 크기 30~36, 최대 2줄, 한 줄 22~28자로 시작합니다. 대화를 오래 남기려면 저스트 채팅 모드와 8~12줄을 사용합니다. 낮은 지연은 <b>빠른 말 읽기 보호</b>를 0.2초로 시작하고, 위쪽 자막을 더 오래 읽으려면 0.5~0.9초로 올립니다.</span><span class="en-text"><b>Caption tab:</b> Start with size 30–36, 2 lines, and 22–28 characters. Use Just Chatting with 8–12 lines for persistent history. Start Fast speech reading hold at 0.2 seconds for low latency, or raise it to 0.5–0.9 seconds for longer reading time.</span></li>
             <li><span class="ko-text"><b>실시간 처리 탭:</b> 청크 1.0초, 겹침 0.2초, 갱신 간격 0.3초, 대기열 2를 기준으로 둡니다.</span><span class="en-text"><b>Streaming tab:</b> Start with chunk 1.0, overlap 0.2, debounce 0.3, and queue 2.</span></li>
             <li><span class="ko-text"><b>저장 후 재시작:</b> 오디오·청크·유행어 설정을 바꿨다면 실행 중인 자막 창을 Ctrl+C로 끄고 START_HERE의 <b>1번 방송 자막 시작</b>을 다시 실행합니다.</span><span class="en-text"><b>Restart:</b> After changing audio, chunk, or slang settings, stop the caption window with Ctrl+C and run START_HERE option <b>1 Start live captions</b> again.</span></li>
           </ol>
@@ -274,6 +302,9 @@
             <li><span class="ko-text"><b>입력 소스</b>를 <b>PC 재생음</b>으로 바꿉니다.</span><span class="en-text">Set <b>Input source</b> to <b>PC playback</b>.</span></li>
             <li><span class="ko-text">방송 소리가 나오는 <b>PC 출력 장치</b>를 선택합니다. 잘 모르겠다면 Windows 기본 출력을 고릅니다.</span><span class="en-text">Choose the output device that plays the broadcast. Use the default Windows output when unsure.</span></li>
             <li><span class="ko-text"><b>오디오 저장</b>을 누른 뒤 START_HERE의 <b>3번 시청자 PC 재생음 자막</b>을 실행합니다. 저장된 마이크 방송 설정을 바꾸지 않고 이번 실행만 PC 재생음으로 시작합니다.</span><span class="en-text">Save Audio, then run START_HERE option <b>3 Caption PC playback</b>. It uses PC playback for one run without changing the saved microphone broadcast setup.</span></li>
+            <li><span class="ko-text"><b>마이크와 PC 소리를 동시에 자막으로 만들기:</b> 입력 소스를 <b>마이크 + PC 재생음</b>으로 선택하고 두 장치를 모두 지정합니다. 마이크 증폭과 PC 증폭을 따로 맞춘 뒤 저장하고 방송을 재시작하세요. START_HERE의 <b>9번</b>은 저장값을 바꾸지 않고 듀얼 입력으로 바로 실행합니다.</span><span class="en-text"><b>Caption microphone and PC playback together:</b> select <b>Dual input</b>, choose both devices, tune each gain, save, and restart. START_HERE option <b>9</b> starts dual input without changing the saved source.</span></li>
+            <li><span class="ko-text"><b>자막 화면 분리:</b> 통합은 <code>/caption</code>, 마이크만은 <code>/caption?source=microphone</code>, PC 소리만은 <code>/caption?source=system</code>을 사용합니다. OBS 브라우저 소스도 같은 주소를 사용합니다.</span><span class="en-text"><b>Separate caption views:</b> use <code>/caption</code> for combined, <code>/caption?source=microphone</code> for mic only, and <code>/caption?source=system</code> for PC playback only.</span></li>
+            <li><span class="ko-text"><b>같은 문장이 두 번 나오면:</b> 헤드폰을 먼저 사용하고 교차 입력 중복 억제를 켜세요. 이 기능은 비슷한 텍스트를 제거하지만 실제 음향 에코 제거 기능은 아닙니다.</span><span class="en-text"><b>If a sentence appears twice:</b> use headphones first and enable cross-source duplicate suppression. It removes similar text but is not acoustic echo cancellation.</span></li>
             <li><span class="ko-text">방송을 재생하고 상태의 Input이 <b>system | voice</b>로 바뀌며 RMS 막대가 움직이는지 확인합니다.</span><span class="en-text">Play the broadcast and confirm that Input shows <b>system | voice</b> and the RMS meter moves.</span></li>
           </ol>
           <p class="help"><span class="ko-text">선택한 출력 장치로 나가는 모든 소리가 들어옵니다. 방송과 함께 알림음, 음악, 게임 소리도 자막 인식 대상이 될 수 있습니다. 특정 브라우저 한 개의 소리만 분리하는 기능은 아닙니다.</span><span class="en-text">All sound sent to the selected output is captured, including notifications, music, and games. This does not isolate one browser or app.</span></p>
@@ -784,9 +815,11 @@
     function updateAudioSourceVisibility() {
       const source = document.getElementById("audioSource").value;
       document.getElementById("microphoneDeviceField").hidden =
-        source !== "microphone";
+        source === "system";
       document.getElementById("systemAudioDeviceField").hidden =
-        source !== "system";
+        source === "microphone";
+      document.getElementById("dualAudioSettings").hidden =
+        source !== "both";
     }
     function bindConfig(cfg, devices, systemDevices) {
       const audioSource = document.getElementById("audioSource");
@@ -845,6 +878,20 @@
       updateAudioSourceVisibility();
       document.getElementById("vadThreshold").value = cfg.audio.vad_energy_threshold;
       document.getElementById("inputGain").value = cfg.audio.input_gain ?? 1.0;
+      document.getElementById("microphoneInputGain").value =
+        cfg.audio.microphone_input_gain ?? cfg.audio.input_gain ?? 1.0;
+      document.getElementById("systemInputGain").value =
+        cfg.audio.system_input_gain ?? cfg.audio.input_gain ?? 1.0;
+      document.getElementById("microphoneVadThreshold").value =
+        cfg.audio.microphone_vad_energy_threshold ?? cfg.audio.vad_energy_threshold;
+      document.getElementById("systemVadThreshold").value =
+        cfg.audio.system_vad_energy_threshold ?? cfg.audio.vad_energy_threshold;
+      document.getElementById("echoSuppression").value = String(
+        cfg.audio.dual?.echo_suppression_enabled !== false
+      );
+      document.getElementById("systemPending").value = String(
+        Boolean(cfg.audio.dual?.system_pending_enabled)
+      );
       document.getElementById("minPeakRms").value = cfg.audio.min_segment_peak_rms ?? 0.0;
       document.getElementById("preRollSec").value = cfg.audio.pre_roll_sec ?? 0.3;
       document.getElementById("vadEngine").value = cfg.vad.engine ?? "energy";
@@ -857,6 +904,13 @@
       document.getElementById("justChattingMode").value = String(Boolean(cfg.caption.just_chatting_mode));
       document.getElementById("justChattingLineHold").value =
         cfg.caption.just_chatting_min_line_hold_sec ?? 0.65;
+      document.getElementById("showSourceLabels").value = String(
+        cfg.caption.show_source_labels !== false
+      );
+      document.getElementById("microphoneLabel").value =
+        cfg.caption.microphone_label || "방송자";
+      document.getElementById("systemLabel").value =
+        cfg.caption.system_label || "컴퓨터";
       document.getElementById("chunkSeconds").value = cfg.streaming.chunk_seconds;
       document.getElementById("chunkOverlap").value = cfg.streaming.chunk_overlap_sec;
       document.getElementById("pendingDebounce").value = cfg.streaming.pending_debounce_sec;
@@ -954,18 +1008,6 @@
     }
 
     document.getElementById("refresh").addEventListener("click", loadAll);
-    document.getElementById("openCaptionPreview").addEventListener("click", () => {
-      const previewWindow = window.open(
-        "/caption?preview=1",
-        "streamerCaptionPreview",
-        "popup=yes,width=1280,height=720,resizable=yes,scrollbars=yes"
-      );
-      if (previewWindow) {
-        previewWindow.focus();
-      } else {
-        state.textContent = "팝업이 차단되었습니다. 브라우저에서 이 사이트의 팝업을 허용하세요";
-      }
-    });
     document.getElementById("autoRefresh").addEventListener("click", () => {
       if (autoTimer) {
         clearInterval(autoTimer);
@@ -1005,6 +1047,15 @@
         system_device: document.getElementById("systemAudioDevice").value,
         vad_energy_threshold: Number(document.getElementById("vadThreshold").value),
         input_gain: Number(document.getElementById("inputGain").value),
+        microphone_input_gain: Number(document.getElementById("microphoneInputGain").value),
+        system_input_gain: Number(document.getElementById("systemInputGain").value),
+        microphone_vad_energy_threshold: Number(document.getElementById("microphoneVadThreshold").value),
+        system_vad_energy_threshold: Number(document.getElementById("systemVadThreshold").value),
+        dual: {
+          microphone_priority: true,
+          system_pending_enabled: document.getElementById("systemPending").value === "true",
+          echo_suppression_enabled: document.getElementById("echoSuppression").value === "true",
+        },
         min_segment_peak_rms: Number(document.getElementById("minPeakRms").value),
         pre_roll_sec: Number(document.getElementById("preRollSec").value),
         silence_duration_sec: Number(document.getElementById("silenceSec").value),
@@ -1044,6 +1095,9 @@
           max_chars_per_line: Number(document.getElementById("maxCharsPerLine").value),
           just_chatting_mode: document.getElementById("justChattingMode").value === "true",
           just_chatting_min_line_hold_sec: Number(document.getElementById("justChattingLineHold").value),
+          show_source_labels: document.getElementById("showSourceLabels").value === "true",
+          microphone_label: document.getElementById("microphoneLabel").value.trim() || "방송자",
+          system_label: document.getElementById("systemLabel").value.trim() || "컴퓨터",
         }
       });
       state.textContent = "화면 설정 즉시 적용 · 문장 길이는 방송 재시작 후 적용";

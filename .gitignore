@@ -31,3 +31,5 @@ state.json
 updater.json
 update-check-cache.json
 *.partial
+logs/*.txt
+reports/archive_backups/

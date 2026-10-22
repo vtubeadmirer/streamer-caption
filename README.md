@@ -40,6 +40,28 @@ The 4060 Ti profile keeps `large-v3` but switches CUDA compute to
 tool keeps the tuned mic device, VAD threshold, input gain, and min peak RMS by
 default.
 
+## Dual Input Beta
+
+The V2.1 beta can capture the broadcaster microphone and Windows PC playback
+at the same time while keeping one STT model loaded. Each input has an isolated
+capture thread, VAD segmenter, ring buffer, recovery status, and source label.
+Microphone confirmed jobs are queued before PC playback jobs. PC pending
+captions are disabled by default to protect latency on RTX 4060 Ti 16GB.
+
+Start it directly with `START_HERE.bat` option 9 or `run_dual_input.bat`.
+The same mode can be saved from Admin > Audio > Input source > Dual input.
+Select both the microphone and Windows output device, then restart captions.
+
+Caption URLs:
+
+- Combined: `http://127.0.0.1:8766/caption`
+- Broadcaster microphone only: `http://127.0.0.1:8766/caption?source=microphone`
+- PC playback only: `http://127.0.0.1:8766/caption?source=system`
+
+Combined captions, the transcript archive, and TXT exports retain the configured
+source labels. Cross-source duplicate suppression hides near-identical text
+captured by both inputs within the configured echo window. Headphones are still
+recommended because software text deduplication is not acoustic echo cancellation.
 ## Quick Check
 
 ```powershell
@@ -308,8 +330,8 @@ all heard variants:
 
 Caption size and line count are edited in the admin `Caption` section. The
 browser caption page refreshes these display settings automatically. Set
-`한글 크기` as low as 6 when a small browser overlay is needed. `최대 줄 수`
-supports up to 500 lines. Use the admin header Caption Preview button to open a separate scrollable preview window. Enable `저스트 채팅 모드` to keep a rolling caption
+`한글 크기` as low as 14 when a small browser overlay is needed. `최대 줄 수`
+supports up to 12 lines. Enable `저스트 채팅 모드` to keep a rolling caption
 history on screen for viewers who arrive late.
  Confirmed captions and pending previews use separate display areas. For fast
 speakers, start the Fast speech reading hold setting at 0.65 seconds; use
@@ -497,6 +519,43 @@ selected ended broadcast. Prune and delete operations create a backup first in
 API contract.
 
 The demo uses a separate database under `reports/phase23_demo`; it does not add synthetic captions to the production archive. Update bundles preserve the production transcript database.
+## 15-Minute Recaps (v2.2)
+
+While live captions run, every 15 minutes the confirmed captions of that block
+are turned into a short Korean recap (headline + up to four bullets) and stored
+with the transcript. Show it in OBS with one browser source:
+
+    http://127.0.0.1:8766/recap          (latest block large, previous block small)
+    http://127.0.0.1:8766/recap?count=1  (latest block only; also ?theme=light, ?position=top)
+
+`START_HERE.bat` option R opens the page. The block length is
+`archive.bucket_minutes` (10-20 is a good range for just chatting).
+
+Recap quality depends on what is installed, and nothing needs configuring:
+
+1. A local Ollama server (`ollama pull exaone3.5:7.8b` or any Korean-capable
+   model) is used automatically when it answers on 127.0.0.1:11434.
+2. Otherwise an installed `claude` or `codex` CLI is used.
+3. Otherwise the built-in keyword summary runs (always works, no network).
+
+Set `archive.recap.provider` to `none` to force the built-in summary, or to
+`openai` with `openai_base_url`, `openai_model` and an API key in the
+`OPENAI_API_KEY` environment variable for a hosted model. Recap generation runs
+in its own thread, falls back on any error, and never delays captions.
+
+## Faster Captions with large-v3-turbo
+
+`large-v3-turbo` decodes several times faster than `large-v3` with almost the
+same Korean accuracy, so confirmed captions appear sooner after a sentence ends.
+Apply it with `START_HERE.bat` option T or:
+
+    .\.venv\Scripts\python.exe tools\apply_profile.py rtx_4060ti_turbo
+
+The model (about 1.6 GB) is downloaded once on the next caption start. Switch
+back with `apply_4060ti_profile.bat`. For segmentation quality, the Silero VAD
+(`vad.engine: "silero"`, set by the auto GPU preset) is recommended over the
+energy VAD.
+
 ## Release installer and automatic updates
 
 The versioned release workflow is documented in `docs/RELEASE_AND_UPDATE_ARCHITECTURE.md`.

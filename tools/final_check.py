@@ -40,6 +40,7 @@ def main() -> int:
         run([sys.executable, "tests/test_caption_overlay_contract.py"]),
         run([sys.executable, "tests/test_analysis_tuning.py"]),
         run([sys.executable, "tests/test_live_analysis.py"]),
+        run([sys.executable, "tests/test_recap.py"]),
         run([sys.executable, "tests/test_phase23_archive.py"]),
         run([sys.executable, "tests/test_phase23_api.py"]),
         run([sys.executable, "tests/test_validation_workflow.py"]),

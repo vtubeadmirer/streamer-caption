@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from core.config import PROJECT_ROOT
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ANNOTATION_KINDS = {"hallucination", "missed", "wrong_word", "good"}
 
 
@@ -132,6 +132,24 @@ class TranscriptArchive:
                     target TEXT NOT NULL DEFAULT '',
                     session_id TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS bucket_recaps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    bucket_index INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    window_start_sec REAL NOT NULL DEFAULT 0,
+                    window_end_sec REAL NOT NULL DEFAULT 0,
+                    caption_count INTEGER NOT NULL DEFAULT 0,
+                    partial INTEGER NOT NULL DEFAULT 0,
+                    method TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    headline TEXT NOT NULL DEFAULT '',
+                    bullets_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                    UNIQUE(session_id, bucket_index)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_annotations_session_offset
@@ -545,6 +563,92 @@ class TranscriptArchive:
                     [(session_id,) for session_id in session_ids],
                 )
         return session_ids
+
+    def upsert_recap(
+        self,
+        session_id: str,
+        bucket_index: int,
+        *,
+        headline: str,
+        bullets: list[str],
+        method: str,
+        model: str = "",
+        caption_count: int = 0,
+        window_start_sec: float = 0.0,
+        window_end_sec: float = 0.0,
+        partial: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Store (or replace) the recap of one bucket and return it as the API shape."""
+        clean_bullets = [str(item).strip() for item in bullets if str(item).strip()][:10]
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO bucket_recaps(
+                    session_id, bucket_index, created_at, window_start_sec, window_end_sec,
+                    caption_count, partial, method, model, headline, bullets_json, metadata_json
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, bucket_index) DO UPDATE SET
+                    created_at = excluded.created_at,
+                    window_start_sec = excluded.window_start_sec,
+                    window_end_sec = excluded.window_end_sec,
+                    caption_count = excluded.caption_count,
+                    partial = excluded.partial,
+                    method = excluded.method,
+                    model = excluded.model,
+                    headline = excluded.headline,
+                    bullets_json = excluded.bullets_json,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    session_id, max(0, int(bucket_index)), _now_iso(), float(window_start_sec), float(window_end_sec),
+                    int(caption_count), 1 if partial else 0, str(method), str(model), str(headline).strip()[:200],
+                    json.dumps(clean_bullets, ensure_ascii=False), _json(metadata),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM bucket_recaps WHERE session_id = ? AND bucket_index = ?",
+                (session_id, max(0, int(bucket_index))),
+            ).fetchone()
+        return self._recap_dict(row)
+
+    def get_recap(self, session_id: str, bucket_index: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM bucket_recaps WHERE session_id = ? AND bucket_index = ?",
+                (session_id, max(0, int(bucket_index))),
+            ).fetchone()
+        return self._recap_dict(row) if row else None
+
+    def list_recaps(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Newest bucket first."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM bucket_recaps WHERE session_id = ?
+                ORDER BY bucket_index DESC LIMIT ?
+                """,
+                (session_id, max(1, min(int(limit), 500))),
+            ).fetchall()
+        return [self._recap_dict(row) for row in rows]
+
+    @staticmethod
+    def _recap_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": int(row["id"]),
+            "session_id": row["session_id"],
+            "bucket_index": int(row["bucket_index"]),
+            "created_at": row["created_at"],
+            "window_start_sec": float(row["window_start_sec"]),
+            "window_end_sec": float(row["window_end_sec"]),
+            "caption_count": int(row["caption_count"]),
+            "partial": bool(row["partial"]),
+            "method": row["method"],
+            "model": row["model"],
+            "headline": row["headline"],
+            "bullets": _decode_json(row["bullets_json"]) if row["bullets_json"] else [],
+            "metadata": _decode_json(row["metadata_json"]),
+        }
 
     def archive_info(self) -> dict[str, Any]:
         with self._connection() as connection:

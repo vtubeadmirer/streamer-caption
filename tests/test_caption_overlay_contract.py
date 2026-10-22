@@ -36,10 +36,9 @@ def main() -> int:
 
     config = load_config()
     validate_config(config)
-    assert (
-        config["caption"]["just_chatting_min_line_hold_sec"]
-        == 0.65
-    )
+    # The shipped default must stay 0.65; the streamer's own config.json may tune it.
+    from core.config import DEFAULTS
+    assert DEFAULTS["caption"]["just_chatting_min_line_hold_sec"] == 0.65
     print("caption_overlay_contract_ok")
     return 0
 

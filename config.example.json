@@ -150,7 +150,7 @@
   "archive": {
     "enabled": true,
     "db_path": "data/transcripts.sqlite3",
-    "bucket_minutes": 30,
+    "bucket_minutes": 15,
     "summary_max_bullets": 5,
     "topic_window_captions": 6,
     "topic_similarity_threshold": 0.22,
@@ -165,7 +165,21 @@
     "live_analysis_enabled": true,
     "live_analysis_every_captions": 8,
     "live_analysis_min_interval_sec": 15,
-    "auto_report_on_close": true
+    "auto_report_on_close": true,
+    "recap": {
+      "enabled": true,
+      "provider": "auto",
+      "max_bullets": 4,
+      "min_captions": 3,
+      "timeout_sec": 60,
+      "max_transcript_chars": 7000,
+      "ollama_url": "http://127.0.0.1:11434",
+      "ollama_model": "",
+      "openai_base_url": "",
+      "openai_model": "",
+      "openai_api_key_env": "OPENAI_API_KEY",
+      "cli_command": ""
+    }
   },
   "log": {
     "dir": "logs"

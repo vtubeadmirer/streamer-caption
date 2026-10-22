@@ -29,6 +29,19 @@ class SttResult:
     elapsed_sec: float
 
 
+def enqueue_confirmed_by_priority(
+    jobs: deque[SttJob],
+    job: SttJob,
+) -> None:
+    priority = int(job.metadata.get("source_priority", 100))
+    for index, queued in enumerate(jobs):
+        queued_priority = int(queued.metadata.get("source_priority", 100))
+        if priority < queued_priority:
+            jobs.insert(index, job)
+            return
+    jobs.append(job)
+
+
 class SttWorker:
     """Single-model STT worker with confirmed-job priority.
 
@@ -87,7 +100,7 @@ class SttWorker:
                 self.dropped_jobs += superseded
                 self.superseded_pending_jobs += superseded
                 self._pending_jobs.clear()
-                self._confirmed_jobs.append(job)
+                enqueue_confirmed_by_priority(self._confirmed_jobs, job)
             else:
                 if len(self._pending_jobs) >= self.max_queue:
                     if not drop_oldest:

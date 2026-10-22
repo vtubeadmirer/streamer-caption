@@ -23,6 +23,7 @@ class AudioChunk:
     duration_sec: float
     status: str = ""
     clip_fraction: float = 0.0
+    source_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -217,13 +218,20 @@ class MicrophoneChunkSource:
         self._restart_count = 0
         self._last_error = ""
 
-    def chunks(self, max_seconds: float | None = None) -> Any:
+    def chunks(
+        self,
+        max_seconds: float | None = None,
+        stop_event: Any | None = None,
+    ) -> Any:
         started = time.monotonic()
         deadline = None if max_seconds is None else started + max_seconds
-        while deadline is None or time.monotonic() < deadline:
+        while (
+            (deadline is None or time.monotonic() < deadline)
+            and not (stop_event is not None and stop_event.is_set())
+        ):
             self._clear_queue()
             try:
-                yield from self._capture_once(deadline)
+                yield from self._capture_once(deadline, stop_event)
                 return
             except KeyboardInterrupt:
                 raise
@@ -238,7 +246,7 @@ class MicrophoneChunkSource:
                     return
                 time.sleep(self.retry_delay_sec)
 
-    def _capture_once(self, deadline: float | None) -> Any:
+    def _capture_once(self, deadline: float | None, stop_event: Any | None) -> Any:
         try:
             import numpy as np
             import sounddevice as sd
@@ -260,6 +268,7 @@ class MicrophoneChunkSource:
                 duration_sec=duration,
                 status=str(status) if status else "",
                 clip_fraction=float(np.mean(np.abs(mono) >= 0.999)),
+                source_name="microphone",
             )
             try:
                 self._queue.put_nowait(chunk)
@@ -280,7 +289,10 @@ class MicrophoneChunkSource:
             callback=callback,
         ):
             last_chunk_at = time.monotonic()
-            while deadline is None or time.monotonic() < deadline:
+            while (
+                (deadline is None or time.monotonic() < deadline)
+                and not (stop_event is not None and stop_event.is_set())
+            ):
                 try:
                     chunk = self._queue.get(timeout=0.5)
                 except queue.Empty:
@@ -314,6 +326,10 @@ class MicrophoneChunkSource:
     @property
     def last_error(self) -> str:
         return self._last_error
+
+    @property
+    def device_label(self) -> str:
+        return str(self.device)
 
 class AudioSegmentSource:
     """Builds VAD segments from any configured audio chunk source."""

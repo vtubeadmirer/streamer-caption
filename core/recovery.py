@@ -10,7 +10,7 @@ class ConfirmedRangeLedger:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._job_ids: set[int] = set()
-        self._ranges: set[tuple[int, int]] = set()
+        self._ranges: set[tuple[str, int, int]] = set()
         self._last_committed_end_sample = 0
         self._committed = 0
         self._duplicates = 0
@@ -34,7 +34,7 @@ class ConfirmedRangeLedger:
                 self._ranges.add(sample_range)
                 self._last_committed_end_sample = max(
                     self._last_committed_end_sample,
-                    sample_range[1],
+                    sample_range[2],
                 )
             self._committed += 1
             return True
@@ -52,7 +52,7 @@ class ConfirmedRangeLedger:
     @staticmethod
     def _sample_range(
         metadata: dict[str, Any],
-    ) -> tuple[int, int] | None:
+    ) -> tuple[str, int, int] | None:
         try:
             start = int(metadata["segment_start_sample"])
             end = int(metadata["segment_end_sample"])
@@ -60,4 +60,5 @@ class ConfirmedRangeLedger:
             return None
         if start < 0 or end <= start:
             return None
-        return start, end
+        source = str(metadata.get("audio_source", "")).strip().lower()
+        return source, start, end

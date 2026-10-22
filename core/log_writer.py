@@ -20,7 +20,7 @@ class JsonlLogWriter:
         self.latest_caption_path = self.session_dir.parent / "latest_captions.txt"
         self.caption_path.write_text("", encoding="utf-8")
         self.latest_caption_path.write_text("", encoding="utf-8")
-        self._caption_keys: set[tuple[int, str]] = set()
+        self._caption_keys: set[tuple[int, str, str]] = set()
         self._lock = threading.Lock()
 
     @property
@@ -52,14 +52,17 @@ class JsonlLogWriter:
         if not text:
             return
         offset_ms = max(0, round(float(event.audio_offset_sec) * 1000))
-        key = (offset_ms, text)
+        source = str(event.metadata.get("audio_source", ""))
+        key = (offset_ms, source, text)
         if key in self._caption_keys:
             return
         self._caption_keys.add(key)
         total_seconds = offset_ms // 1000
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        line = f"[{hours:02d}:{minutes:02d}:{seconds:02d}] {text}\n"
+        source_label = str(event.metadata.get("source_label", "")).strip()
+        prefix = f"[{source_label}] " if source_label else ""
+        line = f"[{hours:02d}:{minutes:02d}:{seconds:02d}] {prefix}{text}\n"
         for output_path in (self.caption_path, self.latest_caption_path):
             with output_path.open("a", encoding="utf-8", newline="\n") as output:
                 output.write(line)
