@@ -27,6 +27,10 @@ function Get-FileSha256([string]$Path) {
 }
 
 function Download-WithProgress([string]$Url, [string]$Target, [long]$ExpectedSize) {
+    # Windows PowerShell 5.1 (the default on every Windows 10/11 PC) does not load
+    # System.Net.Http on its own, and may still default to TLS 1.0 for GitHub.
+    Add-Type -AssemblyName System.Net.Http
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
     $partial = "$Target.partial"
     if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
