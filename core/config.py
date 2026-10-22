@@ -180,7 +180,7 @@ DEFAULTS: dict[str, Any] = {
     "archive": {
         "enabled": True,
         "db_path": "data/transcripts.sqlite3",
-        "bucket_minutes": 30,
+        "bucket_minutes": 15,
         "summary_max_bullets": 5,
         "topic_window_captions": 6,
         "topic_similarity_threshold": 0.22,

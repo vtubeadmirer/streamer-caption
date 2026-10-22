@@ -28,6 +28,10 @@ class UpdateError(RuntimeError):
     pass
 
 
+class NoPublishedRelease(UpdateError):
+    """The repository exists but has no published (non-draft) release yet."""
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8-sig") as handle:
         value = json.load(handle)
@@ -71,6 +75,11 @@ def _request_json(url: str) -> dict[str, Any] | list[Any]:
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # A repository with no published release answers 404 on /releases/latest.
+            raise NoPublishedRelease(f"no published release at {url}") from exc
+        raise UpdateError(f"request failed: {url}: {exc}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise UpdateError(f"request failed: {url}: {exc}") from exc
 
@@ -116,7 +125,7 @@ def _resolve_github_release(repository: str, allow_prerelease: bool) -> dict[str
             None,
         )
         if release is None:
-            raise UpdateError("no published release was found")
+            raise NoPublishedRelease("no published release was found")
     else:
         release = _request_json(f"https://api.github.com/repos/{repository}/releases/latest")
         if not isinstance(release, dict):
@@ -255,7 +264,18 @@ def check_for_update(
         if cached is not None:
             return cached
 
-    resolved = _resolve_github_release(repository, allow_prerelease)
+    try:
+        resolved = _resolve_github_release(repository, allow_prerelease)
+    except NoPublishedRelease:
+        # Nothing to offer yet; this is a normal state for a fresh project, not an error.
+        return {
+            "configured": True,
+            "available": False,
+            "current_version": current,
+            "reason": "no_published_release",
+            "cached": False,
+            "checked_at": checked_at.isoformat(),
+        }
     manifest = resolved["manifest"]
     latest = _validate_version(str(manifest.get("version", "")))
     skipped = str(config.get("skipped_version") or "").lstrip("v")
