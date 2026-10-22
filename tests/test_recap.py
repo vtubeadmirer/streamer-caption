@@ -158,6 +158,7 @@ def main() -> int:
         finally:
             server.stop()
         assert "구간 요약" in page and "/api/archive/recaps" in page
+        assert "지금 이야기 중" in page and "topic_changed" in page and 'params.get("now")' in page, "current-topic line"
         assert listed["bucket_minutes"] == 5 and len(listed["recaps"]) == 1 and listed["recaps"][0]["bucket_index"] == 2
         assert by_latest["session_id"] == "recap-session" and len(by_latest["recaps"]) == 2
 

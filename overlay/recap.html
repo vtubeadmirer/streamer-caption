@@ -55,6 +55,10 @@
     li:first-child { border-top: 0; }
     li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
     .progress { color: var(--muted); font-size: 14px; text-align: right; padding: 0 4px; }
+    .now { display: flex; align-items: baseline; gap: 12px; padding: 10px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24); font-size: 0.95em; line-height: 1.4; overflow-wrap: anywhere; }
+    .now-label { flex: none; color: var(--accent); font-size: 15px; font-weight: 700; }
+    .now-age { flex: none; margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .now[hidden] { display: none; }
     @media (max-width: 640px) {
       body { padding: 12px; font-size: 17px; }
       .recap { padding: 13px 15px; }
@@ -64,12 +68,13 @@
 </head>
 <body class="empty">
   <div class="stack" aria-live="polite">
+    <div class="now" id="now" hidden><span class="now-label">지금 이야기 중</span><span id="nowText"></span><span class="now-age" id="nowAge"></span></div>
     <div id="recaps"></div>
     <div class="progress" id="progress"></div>
   </div>
   <script>
     // OBS browser source: http://127.0.0.1:8766/recap
-    // Options: ?count=2 (recaps shown) &theme=light &position=top &session_id=... &bullets=4
+    // Options: ?count=2 (recaps shown) &theme=light &position=top &session_id=... &bullets=4 &now=0 (hide the "지금 이야기 중" line)
     const params = new URLSearchParams(location.search);
     const fixedSession = params.get("session_id") || "";
     const count = Math.max(1, Math.min(Number(params.get("count") || 2), 4));
@@ -77,6 +82,35 @@
     if (params.get("theme") === "light") document.body.classList.add("light");
     if (params.get("position") === "top") document.body.classList.add("position-top");
     let bucketMinutes = 15;
+    const showNow = params.get("now") !== "0";
+    let nowState = null;   // {text, offset, kind: "topic" | "summary"}
+    let lastOffsetSeen = 0;
+
+    function renderNow() {
+      const box = document.getElementById("now");
+      if (!showNow || !nowState || !nowState.text) { box.hidden = true; return; }
+      document.getElementById("nowText").textContent = nowState.text;
+      const minutes = Math.floor(Math.max(0, lastOffsetSeen - nowState.offset) / 60);
+      document.getElementById("nowAge").textContent = nowState.kind === "topic" ? (minutes >= 1 ? `${minutes}분째` : "방금 전환") : "최근 요약";
+      box.hidden = false;
+    }
+    function noteNow(item) {
+      if (!showNow) return;
+      const offset = Number(item.audio_offset_sec || 0);
+      if (item.type === "topic_changed" && item.text) {
+        nowState = { text: String(item.text), offset, kind: "topic" };
+      } else if (item.type === "summary_updated") {
+        const headline = String(item.metadata?.summary?.headline || item.text || "").trim();
+        // A summary only fills the line until the first real topic change arrives.
+        if (headline && (!nowState || nowState.kind !== "topic")) nowState = { text: headline, offset, kind: "summary" };
+      } else if (item.type === "broadcast_ended") {
+        nowState = null;
+      } else {
+        return;
+      }
+      if (offset > lastOffsetSeen) lastOffsetSeen = offset;
+      renderNow();
+    }
 
     function escapeHtml(value) {
       return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -106,11 +140,16 @@
         if (latest.session && latest.session.id === sessionId) {
           lastOffset = Number(latest.session.last_offset_sec || 0);
           ended = Boolean(latest.session.ended_at);
+          if (lastOffset > lastOffsetSeen) lastOffsetSeen = lastOffset;
         }
+        renderNow();
+        const nowVisible = !document.getElementById("now").hidden;
         const data = await getJson(`/api/archive/recaps?session_id=${encodeURIComponent(sessionId)}&limit=${count}`);
         const recaps = (data.recaps || []).slice(0, count);
         if (!recaps.length) {
-          document.body.classList.add("empty");
+          document.getElementById("recaps").innerHTML = "";
+          document.getElementById("progress").textContent = "";
+          document.body.classList.toggle("empty", !nowVisible);
           return;
         }
         document.getElementById("recaps").innerHTML = recaps.map((recap, index) => {
@@ -140,6 +179,7 @@
     function handleMessage(payload) {
       const items = payload.type === "sync" ? (payload.items || []) : [payload];
       for (const item of items) {
+        noteNow(item);
         if (item.type !== "recap_updated" && item.type !== "broadcast_ended") continue;
         const sessionId = item.metadata?.session_id || "";
         if (fixedSession && sessionId !== fixedSession) continue;

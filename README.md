@@ -27,6 +27,8 @@ Real-time Korean captions for streamers, running entirely on your own NVIDIA GPU
 - **실시간 자막**: 마이크 음성을 1~2초 안에 자막으로. 유행어·보호 단어 사전으로 오인식을 바로잡습니다.
 - **듀얼 자막 (베타)**: 마이크 + PC 재생 소리(디스코드, 영상)를 각각 라벨을 붙여 동시에 자막으로.
 - **15분 요약**: 15분마다 "지금까지 이야기한 것" 요약을 OBS 오버레이로 (`/recap`).
+  오버레이 맨 위에는 **지금 이야기 중** 주제 한 줄이 주제가 바뀔 때마다 갱신됩니다
+  (`/recap?now=0`으로 끌 수 있음).
   기본은 로컬 추출 요약이고, Ollama 같은 로컬 AI나 Claude·Codex CLI가 설치되어 있으면
   자동으로 사용합니다. 구독 토큰이나 API 키를 저장하지 않습니다.
 - **방송 기록**: 방송 중 자막을 검색·내보내기 (`/history`).
@@ -573,7 +575,7 @@ are turned into a short Korean recap (headline + up to four bullets) and stored
 with the transcript. Show it in OBS with one browser source:
 
     http://127.0.0.1:8766/recap          (latest block large, previous block small)
-    http://127.0.0.1:8766/recap?count=1  (latest block only; also ?theme=light, ?position=top)
+    http://127.0.0.1:8766/recap?count=1  (latest block only; also ?theme=light, ?position=top, ?now=0 hides the current-topic line)
 
 `START_HERE.bat` option R opens the page. The block length is
 `archive.bucket_minutes` (10-20 is a good range for just chatting).
