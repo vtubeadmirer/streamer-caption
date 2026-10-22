@@ -36,6 +36,9 @@ GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 PRUNE_DIRS = {"__pycache__"}  # never prune package "tests"/"testing" dirs: torch imports torch.testing at runtime
 
 
+SITECUSTOMIZE = '"""Embedded CPython (python3xx._pth) skips the normal sys.path setup: the script\'s own\ndirectory is not importable and PYTHONPATH is ignored. Streamer Caption runs scripts from\nthe app folder and imports core/, features/, tools/ relative to it, so put the script\ndirectory (or the working directory for -c / -m) first on sys.path, like regular Python."""\nimport os\nimport sys\n\n_argv0 = sys.argv[0] if sys.argv else ""\n_base = os.getcwd() if _argv0 in ("", "-c", "-m") else os.path.dirname(os.path.abspath(_argv0))\nif _base and _base not in sys.path:\n    sys.path.insert(0, _base)\n'
+
+
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -91,6 +94,7 @@ def build(runtime_version: str, dist: Path, requirements: Path, keep_build: bool
         run([str(python), "-m", "pip", "install", "--no-warn-script-location", "--target", str(site_packages), "-r", str(requirements)])
 
         removed = prune(site_packages)
+        (site_packages / "sitecustomize.py").write_text(SITECUSTOMIZE, encoding="utf-8")
         (venv / "RUNTIME_VERSION").write_text(runtime_version + "\n", encoding="utf-8")
 
         # Smoke test inside the built runtime before packaging.

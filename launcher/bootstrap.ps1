@@ -160,8 +160,9 @@ try {
     exit 1
 }
 
-$launcherArgs = @("-InstallRoot", $InstallRoot)
-if ($NoUpdate) { $launcherArgs += "-NoUpdate" }
-if (-not $Menu) { $launcherArgs += "-Direct" }
+# Hashtable splatting binds by parameter name; an array would be passed positionally.
+$launcherArgs = @{ InstallRoot = $InstallRoot }
+if ($NoUpdate) { $launcherArgs.NoUpdate = $true }
+if (-not $Menu) { $launcherArgs.Direct = $true }
 & (Join-Path $PSScriptRoot "launcher.ps1") @launcherArgs
 exit $LASTEXITCODE
