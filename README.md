@@ -1,4 +1,51 @@
-# streamer-caption-v2
+# Streamer Caption
+
+방송 중 말하는 내용을 **내 PC의 GPU로** 실시간 자막으로 만들어 OBS에 띄워 주는 프로그램입니다.
+음성도 자막도 인터넷으로 보내지 않습니다.
+Real-time Korean captions for streamers, running entirely on your own NVIDIA GPU. Nothing leaves your PC.
+
+## 이렇게 시작하세요 (설치 없음)
+
+1. [Releases](https://github.com/vtubeadmirer/streamer-caption/releases)에서
+   `StreamerCaption-<버전>-portable.zip`을 받아 아무 폴더에나 풉니다.
+   (OneDrive 같은 동기화 폴더는 피하세요.)
+2. `StreamerCaption.bat`을 더블클릭합니다.
+   - 처음 한 번만 실행 환경(약 250 MB)을 받고, 이어서 음성 인식 모델(1.6~3 GB)을 받습니다.
+     진행률이 표시됩니다.
+   - 설정 페이지가 브라우저에 열립니다: 마이크 선택 → (선택) PC 소리도 자막으로 →
+     OBS 주소 복사 → 저장하고 시작.
+3. OBS에서 **소스 추가 → 브라우저**, URL에 `http://127.0.0.1:8766/caption`을 넣습니다.
+4. 다음부터는 더블클릭 한 번이면 자막이 시작됩니다. 관리자 페이지: `http://127.0.0.1:8766/admin`
+
+### 필요한 것
+
+- Windows 10/11, NVIDIA 그래픽카드 (VRAM 8 GB 이상 권장, RTX 4060 Ti 16 GB 기준으로 조정됨)
+- 그 외 설치할 것 없음 (Python, CUDA 별도 설치 불필요)
+
+### 할 수 있는 것
+
+- **실시간 자막**: 마이크 음성을 1~2초 안에 자막으로. 유행어·보호 단어 사전으로 오인식을 바로잡습니다.
+- **듀얼 자막 (베타)**: 마이크 + PC 재생 소리(디스코드, 영상)를 각각 라벨을 붙여 동시에 자막으로.
+- **15분 요약**: 15분마다 "지금까지 이야기한 것" 요약을 OBS 오버레이로 (`/recap`).
+  기본은 로컬 추출 요약이고, Ollama 같은 로컬 AI나 Claude·Codex CLI가 설치되어 있으면
+  자동으로 사용합니다. 구독 토큰이나 API 키를 저장하지 않습니다.
+- **방송 기록**: 방송 중 자막을 검색·내보내기 (`/history`).
+- **업데이트 · 다시 시작 · 버그 보내기**: 관리자 페이지에서 버튼 하나. 버그 번들에는
+  자막 텍스트가 들어가지 않습니다.
+
+### 문제가 생기면
+
+- 관리자 페이지의 **버그 보내기** → 번들 만들기 → GitHub 이슈 열기. ZIP 파일을 글에 드래그해 주세요.
+- 바로 이슈 쓰기: https://github.com/vtubeadmirer/streamer-caption/issues/new/choose
+
+---
+
+## Developer notes
+
+이하는 소스에서 직접 실행하거나 수정하는 사람을 위한 기록입니다. 사용자는 위의
+안내만 보면 됩니다.
+
+### streamer-caption-v2 (original build log)
 
 Real-time local captioning for streamers, rebuilt from the handoff documents.
 
@@ -597,7 +644,7 @@ binaries remain subject to their own license terms. See
 
 1. Unzip anywhere (not inside a synced folder such as OneDrive).
 2. Double-click `StreamerCaption.bat`.
-   - First run only: the shared Python runtime (about 1 GB, `runtime-py312-v1.zip`
+   - First run only: the shared Python runtime (about 250 MB, `runtime-py312-v1.zip`
      from the `runtime-py312-v1` GitHub release) is downloaded with a progress bar,
      verified by SHA-256 and unpacked into `runtime/.venv`. The speech model is
      downloaded when captions start.
