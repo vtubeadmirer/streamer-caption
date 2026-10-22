@@ -77,9 +77,9 @@ GitHub release process
 3. Run `BUILD_RELEASE.bat`.
 4. Confirm the ZIP and `release-manifest.json` in `dist`.
 5. Push a matching tag such as `v1.0.0`.
-6. GitHub Actions rejects a tag that does not match `VERSION` and creates a draft Release.
+6. GitHub Actions rejects a tag that does not match `VERSION` and publishes the Release (a tag with `-` becomes a prerelease).
 7. Tags containing `-` are marked as prereleases, for example `v1.0.0-dev.1`.
-8. Review release notes and publish the draft. Only publication makes it visible to normal update checks.
+8. Stable tags are visible to every install; prerelease tags only to installs with `allow_prerelease` (dev-channel portable builds set it automatically).
 
 Repository configuration
 

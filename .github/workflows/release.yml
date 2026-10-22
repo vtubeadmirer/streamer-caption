@@ -50,7 +50,7 @@ jobs:
           path: |
             dist/*.zip
             dist/release-manifest.json
-      - name: Create draft GitHub Release
+      - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
@@ -61,8 +61,12 @@ jobs:
             throw "No release ZIP was built"
           }
           $manifest = (Resolve-Path "dist/release-manifest.json").Path
-          $releaseArgs = @("${{ github.ref_name }}") + @($zips | ForEach-Object { $_.FullName }) + @($manifest, "--draft", "--generate-notes", "--verify-tag")
+          # Published immediately: a "-" in the tag (1.2.0-dev.1) marks a prerelease, which the
+          # updater offers only to installs with allow_prerelease=true; plain tags are stable.
+          $releaseArgs = @("${{ github.ref_name }}") + @($zips | ForEach-Object { $_.FullName }) + @($manifest, "--generate-notes", "--verify-tag")
           if ("${{ github.ref_name }}" -match "-") {
             $releaseArgs += "--prerelease"
+          } else {
+            $releaseArgs += "--latest"
           }
           gh release create @releaseArgs

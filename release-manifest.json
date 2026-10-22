@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "1.1.0-dev.3",
-  "channel": "dev",
+  "version": "1.1.0",
+  "channel": "stable",
   "asset_name": "",
   "sha256": "",
   "runtime_version": "py312-v1",
