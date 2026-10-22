@@ -42,6 +42,7 @@ goto menu
 
 :live
 call run_v2_light.bat
+if errorlevel 76 if not errorlevel 77 exit /b 76
 pause
 goto menu
 

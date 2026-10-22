@@ -27,3 +27,4 @@ jobs:
           python tests/test_updater_no_release.py
           python tests/test_portable_release.py
           python tests/test_updater_runtime.py
+          python tests/test_support_bundle_privacy.py

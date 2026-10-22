@@ -1,0 +1,21 @@
+name: 기능 제안 / Feature request
+description: 있었으면 하는 기능이나 개선 아이디어 / Something you wish the app did
+title: "[제안] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: 어떤 기능인가요? / What should it do?
+      placeholder: "요약 오버레이에 지금 이야기 중인 주제 한 줄도 같이 띄우고 싶어요."
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: 방송에서 어떻게 쓰이나요? / How would you use it on stream?
+  - type: input
+    id: version
+    attributes:
+      label: 버전 / Version
+      placeholder: "1.1.0"

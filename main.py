@@ -8,6 +8,7 @@ from dataclasses import replace
 from core.audio_capture import AudioSegmentSource
 from core.audio_sources import config_for_audio_source, create_audio_chunk_source
 from core.admin_server import AdminServer, AdminState
+from core.app_info import RELAUNCH_EXIT_CODE
 from core.config import load_config
 from core.events import CaptionEvent
 from core.log_writer import JsonlLogWriter
@@ -164,6 +165,10 @@ def run_live(
 
     try:
         for segment in source.segments(max_seconds=max_seconds, on_chunk=on_audio_chunk):
+            if admin_state.control.restart_requested:
+                baseline_exit_code = RELAUNCH_EXIT_CODE
+                print("\nRestart requested from the admin page.")
+                break
             if max_seconds is not None and time.monotonic() - started >= max_seconds:
                 print("\nMax seconds reached.")
                 break
@@ -885,6 +890,11 @@ def run_v2_light(
             )
     try:
         for chunk in source.chunks(max_seconds=max_seconds):
+            if admin_state.control.restart_requested:
+                pipeline_exit_code = RELAUNCH_EXIT_CODE
+                stopped_by_user = True
+                print("\nRestart requested from the admin page.")
+                break
             chunk_source = str(
                 getattr(chunk, "source_name", "") or source_name
             )
@@ -1249,7 +1259,9 @@ def run_v2_light(
             "summary_note: duplicate confirmed results suppressed="
             f"{ledger_state['duplicate_confirmed_results']}"
         )
-    if pipeline_exit_code:
+    if pipeline_exit_code == RELAUNCH_EXIT_CODE:
+        print("summary_note: restarting on request (settings or update)")
+    elif pipeline_exit_code:
         print(f"summary_note: recovery exit code={pipeline_exit_code}")
     report_paths = session_archive.close(
         {

@@ -87,10 +87,15 @@ if (-not $NoUpdate -and (Test-Path -LiteralPath (Join-Path $InstallRoot "updater
                 Write-Host ""
                 Write-Host "A new Streamer Caption version is available: $($status.latest_version)" -ForegroundColor Cyan
                 if ($status.release_notes) { Write-Host $status.release_notes }
-                $answer = Read-Host "Update now? (Y/N)"
-                if ($answer -match '^[Yy]') {
-                    & $RuntimePython $Updater update --install-root $InstallRoot
-                    if ($LASTEXITCODE -ne 0) { Write-Warning "Update failed. The current version was not changed." }
+                if ($Direct) {
+                    # One-button mode: the admin page shows an update banner with a button; no console questions.
+                    Write-Host "Open the admin page and press 'Update now' when convenient."
+                } else {
+                    $answer = Read-Host "Update now? (Y/N)"
+                    if ($answer -match '^[Yy]') {
+                        & $RuntimePython $Updater update --install-root $InstallRoot
+                        if ($LASTEXITCODE -ne 0) { Write-Warning "Update failed. The current version was not changed." }
+                    }
                 }
             }
         }
@@ -99,35 +104,47 @@ if (-not $NoUpdate -and (Test-Path -LiteralPath (Join-Path $InstallRoot "updater
     }
 }
 
-$State = Read-State
-$VersionRoot = Join-Path (Join-Path $InstallRoot "versions") ([string]$State.current_version)
-if (-not (Test-Path -LiteralPath (Join-Path $VersionRoot "main.py"))) {
-    throw "Current version is incomplete: $VersionRoot"
-}
-Ensure-RuntimeLink $VersionRoot
-Ensure-PersistentLinks $VersionRoot
+# Exit code 76 means "start me again": the admin page asked for a restart after a
+# settings change or an in-app update. state.json is re-read so a new version starts.
+$RelaunchExitCode = 76
 $env:STREAMER_CAPTION_USER_DATA = $UserData
-
-Push-Location $VersionRoot
-try {
-    if ($Direct) {
-        $port = Get-AdminPort
-        $firstRunFlag = Join-Path $UserData "first-run.flag"
-        if (Test-Path -LiteralPath $firstRunFlag) {
-            Open-WhenReady "http://127.0.0.1:$port/setup" $port 120
-            Remove-Item -LiteralPath $firstRunFlag -Force -ErrorAction SilentlyContinue
-        }
-        Write-Host "Live captions are starting. Closing this window stops them. Admin page: http://127.0.0.1:$port/admin" -ForegroundColor Green
-        & $RuntimePython (Join-Path $VersionRoot "tools\run_supervised.py")
-        $exitCode = $LASTEXITCODE
-    } else {
-        & (Join-Path $VersionRoot "START_HERE.bat")
-        $exitCode = $LASTEXITCODE
+$env:STREAMER_CAPTION_SUPERVISED = "1"
+do {
+    $State = Read-State
+    $VersionRoot = Join-Path (Join-Path $InstallRoot "versions") ([string]$State.current_version)
+    if (-not (Test-Path -LiteralPath (Join-Path $VersionRoot "main.py"))) {
+        throw "Current version is incomplete: $VersionRoot"
     }
-} finally {
-    Pop-Location
-    Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
-}
+    Ensure-RuntimeLink $VersionRoot
+    Ensure-PersistentLinks $VersionRoot
+
+    Push-Location $VersionRoot
+    try {
+        if ($Direct) {
+            $port = Get-AdminPort
+            $firstRunFlag = Join-Path $UserData "first-run.flag"
+            if (Test-Path -LiteralPath $firstRunFlag) {
+                Open-WhenReady "http://127.0.0.1:$port/setup" $port 120
+                Remove-Item -LiteralPath $firstRunFlag -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host "Live captions are starting (version $($State.current_version)). Closing this window stops them. Admin page: http://127.0.0.1:$port/admin" -ForegroundColor Green
+            & $RuntimePython (Join-Path $VersionRoot "tools\run_supervised.py")
+            $exitCode = $LASTEXITCODE
+        } else {
+            & (Join-Path $VersionRoot "START_HERE.bat")
+            $exitCode = $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
+        Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+    if ($exitCode -eq $RelaunchExitCode) {
+        Write-Host ""
+        Write-Host "Restarting Streamer Caption..." -ForegroundColor Cyan
+        Start-Sleep -Seconds 1
+    }
+} while ($exitCode -eq $RelaunchExitCode)
+
 if ($exitCode -and $State.previous_version) {
     Write-Warning "The application exited with code $exitCode. Previous version: $($State.previous_version)"
     $answer = Read-Host "Roll back to the previous version? (Y/N)"

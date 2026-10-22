@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
+from core import app_info
+from core.app_control import AppController
 from core.audio_capture import list_input_devices
 from core.audio_sources import list_system_audio_devices
 from core.archive_maintenance import create_archive_backup, prune_archive
@@ -16,6 +21,39 @@ from core.profiles import apply_profile, list_profiles
 from core.transcript_archive import TranscriptArchive
 from features.broadcast_report import build_session_report
 from features.summarizer import summarize_captions
+
+
+def issue_url(bundle: dict[str, Any], note: str) -> str:
+    """Prefilled GitHub issue form (field ids match .github/ISSUE_TEMPLATE/bug_report.yml)."""
+    app = bundle.get("environment", {}).get("app", {}) if isinstance(bundle.get("environment"), dict) else {}
+    version = str(app.get("version") or app_info.app_version())
+    first_line = " ".join(note.strip().split())[:60]
+    title = f"[버그] v{version}" + (f": {first_line}" if first_line else "")
+    params = {
+        "template": "bug_report.yml",
+        "title": title,
+        "version": version,
+        "what-happened": note.strip()[:1500],
+        "environment": str(bundle.get("environment_text", "")),
+    }
+    return f"https://github.com/{app_info.updater_repository()}/issues/new?" + urlencode(params)
+
+
+def _bundle_path_in_reports(raw: str) -> Path:
+    if not raw:
+        raise ValueError("path required")
+    reports = (PROJECT_ROOT / "reports").resolve()
+    target = Path(raw).resolve(strict=True)
+    if reports not in target.parents or not target.is_file():
+        raise ValueError("outside the reports folder")
+    return target
+
+
+def reveal_in_explorer(path: Path) -> None:
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", f"/select,{path}"])
+    else:  # pragma: no cover - Windows is the shipping platform
+        subprocess.Popen(["xdg-open", str(path.parent)])
 
 
 class AdminState:
@@ -36,6 +74,7 @@ class AdminState:
         self.audio_sources: dict[str, dict[str, Any]] = {}
         self.last_segment: dict[str, Any] = {}
         self.last_stt: dict[str, Any] = {}
+        self.control = AppController()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +94,8 @@ class AdminState:
             "audio_sources": self.audio_sources,
             "last_segment": self.last_segment,
             "last_stt": self.last_stt,
+            "restart_requested": self.control.restart_requested,
+            "version": app_info.app_version(),
         }
 
 
@@ -170,6 +211,12 @@ class AdminServer:
                 if path == "/api/slang":
                     self._send_json(self._read_slang_files())
                     return
+                if path == "/api/app":
+                    self._send_json({**app_info.describe(), "restart_requested": state.control.restart_requested})
+                    return
+                if path == "/api/update/status":
+                    self._send_json(state.control.snapshot())
+                    return
                 if path.startswith("/api/archive/"):
                     self._handle_archive_get(path, query)
                     return
@@ -244,6 +291,54 @@ class AdminServer:
                         self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                         return
                     self._send_json(self._read_slang_files())
+                    return
+                if path == "/api/update/check":
+                    self._send_json(state.control.check(force=True))
+                    return
+                if path == "/api/update/install":
+                    try:
+                        self._send_json(state.control.start_update())
+                    except Exception as exc:
+                        self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
+                if path == "/api/update/skip":
+                    payload = self._read_json()
+                    version = str(payload.get("version", "")) if isinstance(payload, dict) else ""
+                    try:
+                        self._send_json(state.control.skip_version(version))
+                    except Exception as exc:
+                        self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
+                if path == "/api/app/restart":
+                    payload = self._read_json()
+                    reason = str(payload.get("reason", "")) if isinstance(payload, dict) else ""
+                    result = state.control.request_restart(reason)
+                    result["supervised"] = os.environ.get("STREAMER_CAPTION_SUPERVISED") == "1"
+                    self._send_json(result)
+                    return
+                if path == "/api/support/bundle":
+                    payload = self._read_json()
+                    note = str(payload.get("note", "")) if isinstance(payload, dict) else ""
+                    try:
+                        from tools.make_support_bundle import make_issue_bundle
+
+                        result = make_issue_bundle(status=state.to_dict(), note=note[:4000])
+                    except Exception as exc:
+                        self._send_json({"error": f"{type(exc).__name__}: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                        return
+                    result["issue_url"] = issue_url(result, note)
+                    self._send_json(result)
+                    return
+                if path == "/api/support/reveal":
+                    payload = self._read_json()
+                    raw = str(payload.get("path", "")) if isinstance(payload, dict) else ""
+                    try:
+                        target = _bundle_path_in_reports(raw)
+                    except (OSError, ValueError) as exc:
+                        self._send_json({"error": f"not allowed: {exc}"}, HTTPStatus.BAD_REQUEST)
+                        return
+                    reveal_in_explorer(target)
+                    self._send_json({"ok": True, "path": str(target)})
                     return
                 if path == "/api/archive/session-meta":
                     self._handle_archive_session_meta()

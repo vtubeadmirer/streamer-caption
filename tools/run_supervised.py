@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -11,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.app_info import RELAUNCH_EXIT_CODE, install_root
 from core.config import load_config
 
 RECOVERY_EXIT_CODES = {74, 75}
@@ -37,6 +39,7 @@ def run_supervised(
 ) -> int:
     command = build_child_command(main_args)
     restart_count = 0
+    os.environ["STREAMER_CAPTION_SUPERVISED"] = "1"
 
     while True:
         if restart_count:
@@ -51,6 +54,14 @@ def run_supervised(
             print("supervisor: stopped by user")
             return 0
 
+        if result.returncode == RELAUNCH_EXIT_CODE:
+            if install_root() is None:
+                # Source checkout: nothing can change the code under us, so start again here.
+                print("supervisor: restart requested from the admin page; starting again")
+                continue
+            # Installed/portable layout: the launcher re-reads state.json and may start a new version.
+            print("supervisor: restart requested; handing over to the launcher")
+            return RELAUNCH_EXIT_CODE
         if result.returncode not in RECOVERY_EXIT_CODES:
             return int(result.returncode)
         if restart_count >= max_restarts:

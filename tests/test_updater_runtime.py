@@ -34,7 +34,7 @@ def main() -> int:
         downloads: list[str] = []
         original_download = updater._download
 
-        def fake_download(url: str, target: Path) -> None:
+        def fake_download(url: str, target: Path, progress=None, label: str = "") -> None:
             downloads.append(url)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source / Path(url).name, target)

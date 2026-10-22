@@ -14,7 +14,7 @@ import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 LAUNCHER_VERSION = "1.0.0"
@@ -84,13 +84,29 @@ def _request_json(url: str) -> dict[str, Any] | list[Any]:
         raise UpdateError(f"request failed: {url}: {exc}") from exc
 
 
-def _download(url: str, target: Path) -> None:
+ProgressHook = Callable[[str, int, int], None]  # (label, done_bytes, total_bytes or 0)
+
+
+def _download(url: str, target: Path, progress: ProgressHook | None = None, label: str = "") -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_suffix(target.suffix + ".partial")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as output:
-            shutil.copyfileobj(response, output, length=1024 * 1024)
+            total = 0
+            try:
+                total = int(response.headers.get("Content-Length") or 0)
+            except ValueError:
+                total = 0
+            done = 0
+            while True:
+                block = response.read(1024 * 1024)
+                if not block:
+                    break
+                output.write(block)
+                done += len(block)
+                if progress is not None:
+                    progress(label or target.name, done, total)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         partial.unlink(missing_ok=True)
         raise UpdateError(f"download failed: {url}: {exc}") from exc
@@ -438,7 +454,7 @@ def install_runtime_archive(install_root: Path, archive: Path, info: dict[str, A
     return {"runtime_version": info["runtime_version"], "runtime_installed": True}
 
 
-def ensure_runtime(install_root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def ensure_runtime(install_root: Path, manifest: dict[str, Any], progress: ProgressHook | None = None) -> dict[str, Any]:
     """Download the runtime a release needs when the installed one differs. No-op for venv installs without runtime fields."""
     info = runtime_info_from_manifest(manifest)
     if info is None:
@@ -447,23 +463,23 @@ def ensure_runtime(install_root: Path, manifest: dict[str, Any]) -> dict[str, An
         return {"runtime_version": info["runtime_version"], "runtime_installed": False}
     archive = install_root / "downloads" / info["asset_name"]
     if not archive.exists():
-        _download(info["url"], archive)
+        _download(info["url"], archive, progress, label=f"runtime {info['runtime_version']}")
     try:
         return install_runtime_archive(install_root, archive, info)
     finally:
         archive.unlink(missing_ok=True)
 
 
-def update_from_github(install_root: Path) -> dict[str, Any]:
+def update_from_github(install_root: Path, progress: ProgressHook | None = None) -> dict[str, Any]:
     status = check_for_update(install_root, force=True)
     if not status.get("available"):
         return status
     manifest = status["manifest"]
     version = _validate_version(str(manifest["version"]))
     archive = install_root / "downloads" / f"{version}.zip"
-    _download(str(status["asset_url"]), archive)
+    _download(str(status["asset_url"]), archive, progress, label=f"app {version}")
     # Runtime first: a new app version must never be activated on a runtime it cannot run on.
-    runtime = ensure_runtime(install_root, manifest)
+    runtime = ensure_runtime(install_root, manifest, progress)
     result = install_archive(install_root, manifest, archive)
     result["downloaded"] = str(archive)
     result.update(runtime)

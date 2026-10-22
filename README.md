@@ -566,6 +566,24 @@ The versioned release workflow is documented in `docs/RELEASE_AND_UPDATE_ARCHITE
 - `BUILD_RELEASE.bat` creates a privacy-safe GitHub Release ZIP and SHA-256 manifest.
 - FFmpeg is optional and is installed separately with `INSTALL_OPTIONAL_FFMPEG.bat`.
 
+## Updates, restart and bug reports from the admin page
+
+- The admin page (`http://127.0.0.1:8766/admin`) checks GitHub Releases once an
+  hour. When a newer version exists a banner offers **Update now**, **Skip this
+  version** and **Later**. The download runs in the background with a progress
+  bar; when it is installed, **Restart to apply** relaunches the app on the new
+  version (the launcher re-reads `state.json`, so rollback keeps working).
+- **Restart** in the header applies "cold" settings (microphone, dual input,
+  model) without closing the console window. The setup wizard offers the same
+  button after saving such settings. Technically the app exits with code 76 and
+  the supervisor/launcher starts it again.
+- **Report a bug** builds `reports/streamer_caption_bugreport_*.zip`. It never
+  contains caption text: every spoken string in the session logs, summaries,
+  prompts and word lists is replaced by `[redacted N chars]`. The button opens a
+  prefilled GitHub issue (version, GPU, model, your description); drag the ZIP
+  into the issue. `make_support_bundle.bat` still produces the full bundle for
+  private troubleshooting.
+
 ## License
 
 Streamer Caption source code is available under the MIT License. See `LICENSE`.

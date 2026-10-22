@@ -164,9 +164,19 @@
         },
         archive: { recap: { provider: document.querySelector("input[name=recap]:checked").value } },
       };
-      await postJson("/api/config", payload);
-      $("saveStatus").innerHTML = "저장했습니다. <b>마이크나 듀얼 설정을 바꿨다면</b> 자막 창을 닫고 StreamerCaption.bat을 다시 실행해야 적용됩니다. 바꾸지 않았다면 이 창을 닫고 방송을 시작하세요.";
-      $("saveStatus").className = "status ok";
+      const before = config.audio || {};
+      const coldChanged = String(before.device) !== String(payload.audio.device)
+        || String(before.source || "microphone") !== payload.audio.source
+        || String(before.system_device || "") !== String(payload.audio.system_device || "");
+      config = await postJson("/api/config", payload);
+      if (coldChanged) {
+        $("saveStatus").innerHTML = "저장했습니다. 마이크/듀얼 설정은 자막 프로그램을 다시 시작해야 적용됩니다. <button id=\"restartNow\" class=\"primary\" style=\"margin-left:8px\">지금 다시 시작</button>";
+        $("saveStatus").className = "status ok";
+        $("restartNow").addEventListener("click", restartApp);
+      } else {
+        $("saveStatus").innerHTML = "저장했습니다. 이 창을 닫고 방송을 시작하세요.";
+        $("saveStatus").className = "status ok";
+      }
     } catch (error) {
       $("saveStatus").textContent = "저장하지 못했습니다: " + error.message;
       $("saveStatus").className = "status bad";
@@ -174,6 +184,23 @@
       $("save").disabled = false;
     }
   });
+
+  async function restartApp() {
+    $("restartNow").disabled = true;
+    $("saveStatus").textContent = "다시 시작하는 중… 자막 창이 잠시 멈췄다가 새 설정으로 돌아옵니다.";
+    try { await postJson("/api/app/restart", { reason: "setup" }); } catch (error) { $("saveStatus").textContent = "다시 시작을 요청하지 못했습니다: " + error.message; return; }
+    const started = Date.now();
+    let wentDown = false;
+    const tick = async () => {
+      try {
+        const status = await getJson("/api/status");
+        if (wentDown && !status.restart_requested) { $("saveStatus").textContent = "다시 시작했습니다. 이 창을 닫고 방송을 시작하세요."; return; }
+      } catch (error) { wentDown = true; }
+      if (Date.now() - started < 180000) setTimeout(tick, 1500);
+      else $("saveStatus").textContent = "자막 프로그램이 다시 올라오지 않습니다. StreamerCaption.bat을 다시 실행해 주세요.";
+    };
+    setTimeout(tick, 2500);
+  }
 
   load().then(pollLevel).catch((error) => { $("gpuInfo").textContent = "앱에 연결하지 못했습니다. 자막 창이 켜져 있는지 확인하세요. (" + error.message + ")"; $("gpuInfo").className = "status bad"; });
 </script>

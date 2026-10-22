@@ -95,6 +95,26 @@ Decisions still required before public launch
 - Test full dependency installation and a live caption session on the RTX 4060 Ti machine.
 - Consider Windows code signing to reduce SmartScreen warnings.
 
+## 9. In-app update banner, relaunch and bug bundles
+
+- `core/app_info.py` discovers the layout (`install_root()` = parent of `versions/`
+  when `state.json` exists) and loads `launcher/updater.py` from the install root.
+- `core/app_control.py` (`AppController`, owned by `AdminState`) runs the update
+  check in a background thread with a one-hour in-process cache, installs
+  releases with a progress hook (`updater._download(progress=...)`) and records
+  relaunch requests.
+- Admin routes: `GET /api/app`, `GET /api/update/status`,
+  `POST /api/update/check|install|skip`, `POST /api/app/restart`,
+  `POST /api/support/bundle`, `POST /api/support/reveal`.
+- Relaunch contract: `main.py` exits with `RELAUNCH_EXIT_CODE = 76`;
+  `tools/run_supervised.py` restarts in place on a source checkout and returns
+  76 on a managed install; `run_v2_light.bat` / `START_HERE.bat` propagate 76;
+  `launcher/launcher.ps1` loops while the exit code is 76 and re-reads
+  `state.json`, so an installed update becomes active without a console prompt.
+- `tools/make_support_bundle.py --privacy` (`make_issue_bundle`) builds the
+  transcript-free bundle used by the bug button; `tests/test_support_bundle_privacy.py`
+  asserts that caption text never reaches the ZIP.
+
 ## 8. Portable (no-install) mode
 
 The portable ZIP (`StreamerCaption-<version>-portable.zip`) contains the same

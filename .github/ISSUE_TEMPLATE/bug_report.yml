@@ -1,0 +1,46 @@
+name: 버그 신고 / Bug report
+description: 자막이 안 나오거나, 멈추거나, 이상하게 동작할 때 / Captions missing, stalling or misbehaving
+title: "[버그] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        관리자 페이지(http://127.0.0.1:8766/admin)의 **「버그 보내기」** 버튼을 누르면 아래 칸이 자동으로 채워지고,
+        방송 내용(자막 텍스트)이 제거된 `streamer_caption_bugreport_*.zip` 파일이 만들어집니다. 그 ZIP을 이 글에 **드래그해서 첨부**해 주세요.
+        The **Report a bug** button on the admin page fills this form and builds a ZIP with no caption text. Drag that ZIP into this issue.
+  - type: input
+    id: version
+    attributes:
+      label: 버전 / Version
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 무슨 일이 있었나요? / What happened?
+      description: 무엇을 하려고 했고, 실제로는 어떻게 되었는지 / What you tried and what happened instead
+      placeholder: "방송 시작 10분쯤 지나면 자막이 멈추고 다시 안 나옵니다."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 다시 만드는 방법 / Steps to reproduce
+      placeholder: |
+        1. StreamerCaption.bat 실행
+        2. 듀얼(마이크+PC) 켜기
+        3. ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: 환경 / Environment
+      description: 버그 보내기 버튼이 자동으로 채웁니다 / Filled automatically by the Report a bug button
+      render: text
+  - type: checkboxes
+    id: attachment
+    attributes:
+      label: 첨부 / Attachment
+      options:
+        - label: 버그 번들 ZIP(streamer_caption_bugreport_*.zip)을 첨부했습니다 / I attached the bug bundle ZIP
