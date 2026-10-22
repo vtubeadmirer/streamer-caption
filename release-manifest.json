@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "1.1.0-dev.2",
+  "version": "1.1.0-dev.3",
   "channel": "dev",
   "asset_name": "",
   "sha256": "",
@@ -9,7 +9,7 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "무설치 포터블 버전(StreamerCaption.bat 더블클릭), 15분 요약 오버레이(/recap), 마이크+PC 듀얼 자막, 관리자 페이지에서 업데이트·다시 시작·버그 보내기, large-v3-turbo 프로필.",
+  "release_notes": "무설치 포터블 버전(StreamerCaption.bat 더블클릭), 15분 요약 오버레이(/recap)와 '지금 이야기 중' 주제 줄, 마이크+PC 듀얼 자막, 관리자 페이지에서 업데이트·다시 시작·버그 보내기, large-v3-turbo 프로필.",
   "runtime_asset_name": "runtime-py312-v1.zip",
   "runtime_sha256": "",
   "runtime_size": 0,

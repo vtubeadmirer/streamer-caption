@@ -192,11 +192,16 @@ def environment_summary(config: dict[str, Any]) -> dict[str, Any]:
         gpu = run_nvidia_smi()
     except Exception as exc:  # diagnostics are best effort
         gpu = {"error": f"{type(exc).__name__}: {exc}"}
+    # Package metadata only: importing torch/ctranslate2 inside the admin HTTP thread can
+    # crash the process (native DLL init), and the version is all a bug report needs.
+    from importlib import metadata
+
     versions: dict[str, str] = {}
-    for module in ("faster_whisper", "ctranslate2", "torch", "numpy", "sounddevice", "websockets"):
+    for module, dist in (("faster_whisper", "faster-whisper"), ("ctranslate2", "ctranslate2"), ("torch", "torch"),
+                         ("numpy", "numpy"), ("sounddevice", "sounddevice"), ("websockets", "websockets")):
         try:
-            versions[module] = str(__import__(module).__version__)
-        except Exception:
+            versions[module] = metadata.version(dist)
+        except metadata.PackageNotFoundError:
             versions[module] = "missing"
     return {
         "app": info,
