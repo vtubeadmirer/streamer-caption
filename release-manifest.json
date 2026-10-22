@@ -9,7 +9,7 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "Dual input (microphone + PC playback with cross-source echo suppression), 15-minute bucket recaps with an OBS overlay (/recap) and zero-config LLM fallback, large-v3-turbo profile, July stabilization fixes.",
+  "release_notes": "무설치 포터블 버전(StreamerCaption.bat 더블클릭), 15분 요약 오버레이(/recap), 마이크+PC 듀얼 자막, 관리자 페이지에서 업데이트·다시 시작·버그 보내기, large-v3-turbo 프로필.",
   "runtime_asset_name": "runtime-py312-v1.zip",
   "runtime_sha256": "",
   "runtime_size": 0,
