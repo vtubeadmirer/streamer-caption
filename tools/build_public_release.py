@@ -205,6 +205,10 @@ def build_portable_bundle(source: Path, dist: Path, version: str, included: list
     }
     state = {"current_version": version, "previous_version": None, "installed_at": None, "install_root": None, "portable": True}
     updater = json.loads((source / "updater.example.json").read_text(encoding="utf-8-sig"))
+    if "-" in version:
+        # A dev/pre-release build should keep receiving dev builds; GitHub's /releases/latest hides prereleases.
+        updater["allow_prerelease"] = True
+        updater["channel"] = "dev"
 
     def write_text(relative: str, payload: str) -> None:
         info = zipfile.ZipInfo((Path(PORTABLE_ROOT) / relative).as_posix(), date_time=(2026, 1, 1, 0, 0, 0))

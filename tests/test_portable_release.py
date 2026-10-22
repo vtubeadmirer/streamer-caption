@@ -48,6 +48,7 @@ def main() -> int:
             assert state["current_version"] == version and state["portable"] is True and state["previous_version"] is None
             updater = json.loads(bundle.read(root + "updater.json"))
             assert updater["repository"] == "vtubeadmirer/streamer-caption"
+            assert updater["allow_prerelease"] is ("-" in version), "prerelease builds follow the dev channel"
             assert bundle.read(root + f"versions/{version}/VERSION").decode("utf-8-sig").strip() == version
 
         # Without a runtime manifest the template values are used and the URL still points at the runtime release.
