@@ -46,6 +46,7 @@ def main() -> int:
         run([sys.executable, "tests/test_updater_runtime.py"]),
         run([sys.executable, "tests/test_support_bundle_privacy.py"]),
         run([sys.executable, "tests/test_app_control.py"]),
+        run([sys.executable, "tests/test_user_data_paths.py"]),
         run([sys.executable, "tests/test_phase23_archive.py"]),
         run([sys.executable, "tests/test_phase23_api.py"]),
         run([sys.executable, "tests/test_validation_workflow.py"]),

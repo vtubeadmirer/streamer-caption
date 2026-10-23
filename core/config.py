@@ -139,7 +139,7 @@ DEFAULTS: dict[str, Any] = {
         "connect_timeout_sec": 90.0,
     },
     "vad": {
-        "engine": "energy",
+        "engine": "silero",  # speech-probability VAD; falls back to energy if torch is unavailable
         "device": "cpu",
         "speech_threshold": 0.5,
         "runtime_timeout_ms": 50,
@@ -336,12 +336,47 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return result
 
 
+# Files that first-run setup (tools/bootstrap_user_data.py) places under user-data with
+# absolute paths. When the whole install folder is moved (e.g. out of OneDrive), those
+# paths still point at the old place; load_config re-anchors them to the current root.
+USER_DATA_FILES: dict[tuple[str, str], str] = {
+    ("defense", "blocklist_path"): "data/blocklist.txt",
+    ("defense", "whitelist_path"): "data/whitelist.txt",
+    ("slang", "dict_path"): "data/slang_dict.json",
+    ("archive", "db_path"): "data/transcripts.sqlite3",
+    ("log", "dir"): "logs",
+}
+
+
+def _anchor_user_data_paths(config: dict[str, Any], user_data_root: Path = USER_DATA_ROOT) -> dict[str, Any]:
+    if user_data_root == PROJECT_ROOT:
+        return config
+    root = user_data_root.resolve()
+    for (section, key), relative in USER_DATA_FILES.items():
+        value = config.get(section, {}).get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        current = Path(value)
+        if not current.is_absolute():
+            continue
+        try:
+            current.resolve().relative_to(root)
+            continue  # already under this user-data folder
+        except ValueError:
+            pass
+        # Only paths that setup generated (".../user-data/<relative>") are moved along;
+        # a custom location the user typed is left alone.
+        if current.as_posix().lower().endswith(("/user-data/" + relative).lower()):
+            config[section][key] = str(root / relative)
+    return config
+
+
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     if not path.exists():
         return copy.deepcopy(DEFAULTS)
     with path.open("r", encoding="utf-8") as f:
         user_config = json.load(f)
-    return deep_merge(DEFAULTS, user_config)
+    return _anchor_user_data_paths(deep_merge(DEFAULTS, user_config))
 
 
 def _bounded_number(
