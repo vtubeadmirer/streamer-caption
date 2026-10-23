@@ -1,11 +1,11 @@
 faster-whisper==1.2.1
-numpy==2.5.1
-sounddevice==0.5.5
+numpy==2.5.4
+sounddevice==0.5.6
 av==18.0.0
-silero-vad==6.2.1
+silero-vad==6.2.3
 websockets==16.1
 SoundCard==0.4.6
 # ctranslate2 4.8.x is a CUDA 12.8 build that loads cublas64_12.dll at the first GPU matmul;
 # shipping cuBLAS here means GPU captions need only the NVIDIA driver, not a CUDA Toolkit.
 ctranslate2==4.8.3
-nvidia-cublas-cu12==12.8.4.1; sys_platform == "win32"
+nvidia-cublas-cu12==12.9.2.10; sys_platform == "win32"
