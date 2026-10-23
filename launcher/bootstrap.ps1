@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$InstallRoot = "",
     [switch]$NoUpdate,
     [switch]$Menu

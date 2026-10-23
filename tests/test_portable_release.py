@@ -58,6 +58,10 @@ def main() -> int:
         assert manifest["runtime_version"] == "py312-v1" and manifest["runtime_asset_name"] == "runtime-py312-v1.zip"
         assert manifest["runtime_url"].endswith("/releases/download/runtime-py312-v1/runtime-py312-v1.zip")
 
+    for script in sorted((ROOT / "launcher").glob("*.ps1")) + sorted((ROOT / "tools").glob("*.ps1")):
+        raw = script.read_bytes()
+        if any(byte > 127 for byte in raw):
+            assert raw.startswith(bytes([0xEF, 0xBB, 0xBF])), f"{script.name} has non-ASCII text but no UTF-8 BOM (Windows PowerShell 5.1 would print mojibake)"
     print("portable_release_ok")
     return 0
 
