@@ -3,14 +3,16 @@ name: Build portable runtime
 # Builds runtime-<version>.zip (embedded Python 3.12 + requirements.txt, venv layout)
 # and publishes it as the release "runtime-<version>". The app's release manifest
 # points portable installs at this asset; it only changes when requirements change.
+# A published runtime is never replaced: installed apps pin its SHA-256, so a rebuild
+# needs a new runtime_version in release-manifest.json.
 
 on:
   workflow_dispatch:
     inputs:
       runtime_version:
-        description: "Runtime version tag suffix (e.g. py312-v1)"
+        description: "Runtime version tag suffix (e.g. py312-v2)"
         required: true
-        default: "py312-v1"
+        default: "py312-v2"
   push:
     branches: ["main"]
     paths:
@@ -34,8 +36,20 @@ jobs:
         run: |
           $v = "${{ github.event.inputs.runtime_version }}"
           if (-not $v) { $v = (Get-Content release-manifest.json -Raw | ConvertFrom-Json).runtime_version }
-          if (-not $v) { $v = "py312-v1" }
+          if (-not $v) { $v = "py312-v2" }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Refuse to overwrite a published runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "runtime-${{ steps.ver.outputs.version }}"
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Output "::error::Release $tag already exists and is never replaced (installed apps verify its SHA-256). Bump runtime_version, runtime_asset_name and runtime_release_tag in release-manifest.json."
+            exit 1
+          }
+          exit 0
       - name: Build runtime ZIP
         run: python tools/build_runtime.py --runtime-version ${{ steps.ver.outputs.version }}
       - name: Upload workflow artifact
@@ -53,9 +67,5 @@ jobs:
           $tag = "runtime-${{ steps.ver.outputs.version }}"
           $zip = (Get-ChildItem dist -Filter "runtime-*.zip" | Select-Object -First 1).FullName
           $manifest = (Resolve-Path dist/runtime-manifest.json).Path
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag $zip $manifest --title "Portable runtime $tag" --notes "Embedded Python ${{ steps.ver.outputs.version }} runtime for the no-install launcher. Not an app release."
-          } else {
-            gh release upload $tag $zip $manifest --clobber
-          }
+          # Never "Latest": the app updater reads /releases/latest and must only ever see app releases.
+          gh release create $tag $zip $manifest --latest=false --title "Portable runtime $tag" --notes "Embedded Python ${{ steps.ver.outputs.version }} runtime for the no-install launcher. Not an app release."

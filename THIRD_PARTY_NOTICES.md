@@ -13,6 +13,8 @@ Direct runtime dependencies
 - silero-vad 6.2.1: MIT
 - websockets 16.1: BSD-3-Clause
 - SoundCard 0.4.6: BSD-3-Clause
+- CTranslate2 4.8.3: MIT
+- NVIDIA cuBLAS 12.8.4.1 (`nvidia-cublas-cu12`, Windows only; bundled in the portable runtime so GPU captions need no CUDA Toolkit): NVIDIA CUDA Toolkit EULA, which lists the cuBLAS DLLs as distributable (Attachment A). The text ships as `nvidia_cublas_cu12-12.8.4.1.dist-info/License.txt`. The runtime build folds each wheel's `*.dist-info/licenses/` tree into `licenses.txt` next to it instead of dropping it.
 
 Optional SimulStreaming dependencies
 

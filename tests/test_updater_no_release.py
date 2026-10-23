@@ -56,6 +56,25 @@ def main() -> int:
             updater._request_json = original_request_json
         assert result["available"] is False and result["reason"] == "no_published_release", result
 
+    # Dev channel: a newer runtime-* release (no release-manifest.json) must not shadow the app release.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "state.json").write_text(json.dumps({"current_version": "1.0.0", "previous_version": None}), encoding="utf-8")
+        (root / "updater.json").write_text(json.dumps({"repository": "vtubeadmirer/streamer-caption", "allow_prerelease": True, "check_interval_hours": 0}), encoding="utf-8")
+        manifest = {"version": "1.2.0-dev.1", "asset_name": "streamer-caption-1.2.0-dev.1.zip", "sha256": "0" * 64}
+        releases = [
+            {"tag_name": "runtime-py312-v2", "draft": False, "assets": [{"name": "runtime-py312-v2.zip", "browser_download_url": "https://x/r.zip"}]},
+            {"tag_name": "v1.2.0-dev.1", "draft": False, "assets": [
+                {"name": "release-manifest.json", "browser_download_url": "https://x/release-manifest.json"},
+                {"name": manifest["asset_name"], "browser_download_url": "https://x/app.zip"}]},
+        ]
+        original_request_json = updater._request_json
+        updater._request_json = lambda url: releases if "/releases?" in url else manifest
+        try:
+            result = updater.check_for_update(root, force=True)
+        finally:
+            updater._request_json = original_request_json
+        assert result["available"] is True and result["latest_version"] == "1.2.0-dev.1", result
     print("updater_no_release_ok")
     return 0
 

@@ -225,6 +225,9 @@ class AdminServer:
             def do_POST(self) -> None:
                 parsed = urlparse(self.path)
                 path = parsed.path
+                if not self._same_origin():
+                    self._send_json({"error": "cross-origin request refused"}, HTTPStatus.FORBIDDEN)
+                    return
                 if path == "/api/config":
                     payload = self._read_json()
                     if not isinstance(payload, dict):
@@ -830,6 +833,19 @@ class AdminServer:
 
             def log_message(self, format: str, *args: Any) -> None:
                 return
+
+            def _same_origin(self) -> bool:
+                """Browsers always send Origin on cross-site POSTs; refuse those so a random web
+                page cannot restart captions or start downloads on the streamer's PC. Requests
+                without Origin (local tools, curl) and same-origin pages are allowed."""
+                origin = self.headers.get("Origin")
+                if not origin or origin == "null":
+                    return not origin
+                host = self.headers.get("Host", "")
+                allowed = {f"http://{host}"} if host else set()
+                for name in ("127.0.0.1", "localhost", "[::1]"):
+                    allowed.add(f"http://{name}:{self.server.server_address[1]}")
+                return origin.rstrip("/") in allowed
 
             def _read_json(self) -> Any:
                 length = int(self.headers.get("Content-Length", "0"))

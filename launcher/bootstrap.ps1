@@ -68,8 +68,11 @@ function Download-WithProgress([string]$Url, [string]$Target, [long]$ExpectedSiz
 }
 
 function Install-RuntimeArchive([string]$Zip, [string]$ExpectedSha, [string]$Version) {
+    if (-not $ExpectedSha -or $ExpectedSha.Length -ne 64) {
+        throw "runtime.json에 검증값(SHA-256)이 없습니다. 이 배포 ZIP은 손상되었거나 잘못 만들어졌습니다. 다시 받아 주세요."
+    }
     $actual = Get-FileSha256 $Zip
-    if ($ExpectedSha -and $actual -ne $ExpectedSha.ToLowerInvariant()) {
+    if ($actual -ne $ExpectedSha.ToLowerInvariant()) {
         Remove-Item -LiteralPath $Zip -Force
         throw "실행 환경 파일 검증에 실패했습니다 (SHA-256 불일치). 다시 실행하면 새로 받습니다."
     }

@@ -4,22 +4,29 @@ Two flavours:
   * full    (make_support_bundle)  - everything, including caption text; for sending
                                      privately to a helper you trust.
   * privacy (make_issue_bundle)    - what a public GitHub issue needs and nothing that
-                                     repeats what was said on stream. Caption text,
-                                     summaries, slang lists and prompts are replaced
-                                     by length markers so timing and error structure
-                                     stay intact.
+                                     repeats what was said on stream. A string survives
+                                     only under an allow-listed key (event types, times,
+                                     engine/model/device names, error messages); every
+                                     other string becomes a length marker, so timing and
+                                     error structure stay intact. Paths under the user
+                                     profile appear as %USERPROFILE%.
 """
 from __future__ import annotations
 
 import argparse
 import copy
+import csv
+import io
 import json
+import os
 import platform
+import re
 import sys
 import time
 import zipfile
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -28,17 +35,6 @@ from core.archive_maintenance import recover_unclean_sessions
 from core.config import PROJECT_ROOT, USER_DATA_ROOT, load_config
 from core.transcript_archive import TranscriptArchive
 from tools.broadcast_validation import write_validation_report
-
-# JSON keys whose string values can contain spoken words (captions, summaries, hints).
-TEXT_KEYS = {
-    "text", "ko", "en", "caption", "captions", "pending_text", "confirmed_text", "raw_text",
-    "source_text", "translation", "summary", "summaries", "title", "topic", "topics",
-    "highlights", "keywords", "bullets", "lines", "note", "notes", "annotation",
-    "initial_prompt", "last_caption", "sample", "samples", "preview", "recap", "content",
-    "sentences", "segments_text", "transcript", "query", "label", "last_error_text",
-}
-# Log-folder files that are pure text transcripts; never copied into the privacy bundle.
-TRANSCRIPT_FILES = {"captions.txt", "latest_captions.txt", "broadcast_report.md", "validation_report.md"}
 
 
 def latest_files(pattern: str, limit: int = 8, root: Path | None = None) -> list[Path]:
@@ -132,16 +128,111 @@ def make_support_bundle() -> Path:
 
 
 # --------------------------------------------------------------------------- privacy bundle
+#
+# Allow-list, not deny-list: new pipeline keys keep carrying spoken words (corrected_text,
+# summary headlines, keyword terms, recap text, speaker labels), so a string survives only
+# under a key known to hold something code or hardware chose. Numbers, booleans and null
+# always pass; list items inherit the list's key.
+
+# Enums, ids, timestamps, versions and device/model names.
+STRUCTURAL_KEYS = frozenset({
+    "ts", "created_at", "generated_at", "started_at", "ended_at", "last_caption_at",
+    "event_type", "type", "kind", "verdict", "status", "state", "reason", "reasons",
+    "session_id", "id", "version", "python", "platform", "os", "profile", "mode",
+    "engine", "method", "methods", "analysis_method", "window_mode", "provider", "model",
+    "device", "device_label", "compute_type", "language", "task", "vad_engine",
+    "worker_mode", "worker_fallback", "runtime_vad_override", "process_state", "job_type",
+    "active_job_type", "stt_job_type", "recovery_source", "audio_source", "audio_mode",
+    "source_priority", "duplicate_source", "defense_reason", "defense_signals",
+})
+# File-system locations; the user-profile part is masked.
+PATH_KEYS = frozenset({"path", "log_path", "session_jsonl", "registered_dll_dirs"})
+# Exception and warning text: kept for debugging, masked and cut to ERROR_TEXT_LIMIT.
+ERROR_KEYS = frozenset({
+    "error", "last_error", "fatal_error", "degraded_reason", "source_last_error",
+    "recovery_reason", "fallback_reason", "pipeline_warning",
+})
+ERROR_TEXT_LIMIT = 300
+# Keys that are structural only inside one of these containers (a GPU row, a check result).
+SCOPED_KEYS = {
+    "name": frozenset({"gpu", "gpus", "packages", "devices", "checks"}),
+    "detail": frozenset({"checks"}),
+    "args": frozenset({"checks"}),
+}
+# Error texts that quote raw engine output (possibly a caption line) after a fixed prefix.
+RAW_OUTPUT_PREFIXES = ("Invalid SimulStreaming JSON:",)
+# A work OneDrive folder is named after the organisation: "OneDrive - <Org>".
+_ONEDRIVE_ORG = re.compile(r"(OneDrive - )[^\\/\r\n\"']+")
 
 
-def scrub_value(value: Any, *, key: str = "") -> Any:
-    """Replace spoken-word strings by length markers; keep numbers, flags and structure."""
+def _redacted(value: str) -> str:
+    return f"[redacted {len(value)} chars]" if value else ""
+
+
+@lru_cache(maxsize=8)
+def _profile_pattern(*roots: str) -> re.Pattern[str] | None:
+    alternatives = []
+    for root in roots:
+        parts = [part for part in re.split(r"[\\/]+", root) if part]
+        if not parts or (len(parts) == 1 and parts[0].endswith(":")):
+            continue  # never mask a bare drive or "/"
+        lead = r"[\\/]+" if root.startswith(("\\", "/")) else ""
+        alternatives.append(lead + r"[\\/]+".join(re.escape(part) for part in parts))
+    if not alternatives:
+        return None
+    alternatives.sort(key=len, reverse=True)
+    # Either separator and any case. No word boundary on purpose: "C:\Users\kim.old" also
+    # names the person, so masking it as "%USERPROFILE%.old" is the right mistake to make.
+    return re.compile("(?:" + "|".join(alternatives) + ")", re.IGNORECASE)
+
+
+def mask_private_paths(text: str) -> str:
+    """Show paths under the user profile as %USERPROFILE%\\... and hide the organisation
+    in a work OneDrive folder; both name the person."""
+    if "\\" not in text and "/" not in text:
+        return text  # not a path (most enums and timestamps); skip the regex work
+    pattern = _profile_pattern(str(Path.home()), os.environ.get("USERPROFILE", ""))
+    if pattern is not None:
+        text = pattern.sub("%USERPROFILE%", text)
+    return _ONEDRIVE_ORG.sub(r"\1[redacted]", text)
+
+
+def _mask_tree(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(k): scrub_value(v, key=str(k)) for k, v in value.items()}
+        return {key: _mask_tree(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [scrub_value(item, key=key) for item in value]
-    if isinstance(value, str) and key in TEXT_KEYS:
-        return f"[redacted {len(value)} chars]" if value else ""
+        return [_mask_tree(item) for item in value]
+    if isinstance(value, str):
+        return mask_private_paths(value)
+    return value
+
+
+def _error_text(value: str) -> str:
+    for prefix in RAW_OUTPUT_PREFIXES:
+        head, found, tail = value.partition(prefix)
+        if found:
+            value = f"{head}{prefix} {_redacted(tail.strip())}"
+    text = mask_private_paths(value).strip()
+    return text if len(text) <= ERROR_TEXT_LIMIT else text[: ERROR_TEXT_LIMIT - 1] + "…"
+
+
+def _scrub_string(value: str, key: str, container: str) -> str:
+    if key in ERROR_KEYS:
+        return _error_text(value)
+    if key in STRUCTURAL_KEYS or key in PATH_KEYS or container in SCOPED_KEYS.get(key, ()):
+        return mask_private_paths(value)
+    return _redacted(value)
+
+
+def scrub_value(value: Any, *, key: str = "", container: str = "") -> Any:
+    """Keep numbers, flags and structure; keep a string only under an allow-listed key.
+    `container` is the key of the enclosing object; it scopes keys such as "name"."""
+    if isinstance(value, dict):
+        return {mask_private_paths(str(k)): scrub_value(v, key=str(k), container=key) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_value(item, key=key, container=container) for item in value]
+    if isinstance(value, str):
+        return _scrub_string(value, key, container)
     return value
 
 
@@ -168,6 +259,33 @@ def scrub_json_text(text: str) -> str:
     return json.dumps(scrub_value(value), ensure_ascii=False, indent=2) + "\n"
 
 
+_COLUMN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
+def scrub_csv(text: str) -> str:
+    """Column names in the header row and numeric cells survive; any other cell is redacted."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    try:
+        for index, row in enumerate(csv.reader(io.StringIO(text))):
+            writer.writerow([
+                cell if not cell.strip() or _is_number(cell) or (index == 0 and _COLUMN_NAME.fullmatch(cell))
+                else _redacted(cell)
+                for cell in row
+            ])
+    except csv.Error:
+        return "unparsable_csv\n"
+    return out.getvalue()
+
+
 def scrub_config(config: dict[str, Any]) -> dict[str, Any]:
     cleaned = copy.deepcopy(config)
     whisper = cleaned.get("whisper")
@@ -178,10 +296,11 @@ def scrub_config(config: dict[str, Any]) -> dict[str, Any]:
         for key in ("microphone_label", "system_label"):
             if caption.get(key):
                 caption[key] = f"[redacted {len(str(caption[key]))} chars]"
-    return cleaned
+    return _mask_tree(cleaned)
 
 
 def environment_summary(config: dict[str, Any]) -> dict[str, Any]:
+    """Fixed fields only, so it needs no allow-list; profile paths are masked."""
     from core.app_info import describe  # local import keeps this tool light for the CLI path
 
     info = describe()
@@ -203,7 +322,7 @@ def environment_summary(config: dict[str, Any]) -> dict[str, Any]:
             versions[module] = metadata.version(dist)
         except metadata.PackageNotFoundError:
             versions[module] = "missing"
-    return {
+    return _mask_tree({
         "app": info,
         "gpu": gpu,
         "packages": versions,
@@ -212,11 +331,21 @@ def environment_summary(config: dict[str, Any]) -> dict[str, Any]:
         "whisper": {k: config.get("whisper", {}).get(k) for k in ("model", "device", "compute_type", "language")},
         "audio": {k: config.get("audio", {}).get(k) for k in ("source", "device", "system_device")},
         "vad": {k: config.get("vad", {}).get(k) for k in ("engine", "device", "speech_threshold")},
-    }
+    })
+
+
+# Backslash, "C:/", a "/" that starts a word, or an already masked %USERPROFILE% path.
+_PATH_HINT = re.compile(r"\\|[A-Za-z]:/|(?:^|\s)/[^\s/]|%[A-Za-z]+%")
+
+
+def _issue_field(value: Any) -> str:
+    text = " ".join(str(value).split())
+    return "(local path)" if _PATH_HINT.search(text) else text
 
 
 def environment_text(environment: dict[str, Any]) -> str:
-    """Short plain-text block for the GitHub issue form."""
+    """Short plain-text block for the GitHub issue form; it ends up in a public URL, so a
+    value that holds a path (a local model folder, an error naming a file) is left out."""
     app = environment.get("app", {})
     gpu = environment.get("gpu", {})
     gpu_name = gpu.get("name") or gpu.get("gpu") or gpu.get("error") or "unknown"
@@ -226,31 +355,36 @@ def environment_text(environment: dict[str, Any]) -> str:
     whisper = environment.get("whisper", {})
     audio = environment.get("audio", {})
     packages = environment.get("packages", {})
+    field = _issue_field
     lines = [
-        f"version: {app.get('version')} ({'portable' if app.get('portable') else 'installed' if app.get('managed') else 'source'})",
-        f"os: {environment.get('os')}",
-        f"python: {app.get('python')}",
-        f"gpu: {gpu_name}",
-        f"model: {whisper.get('model')} / {whisper.get('device')} / {whisper.get('compute_type')}",
-        f"audio: source={audio.get('source')} vad={environment.get('vad', {}).get('engine')}",
-        f"packages: faster_whisper={packages.get('faster_whisper')} ctranslate2={packages.get('ctranslate2')} torch={packages.get('torch')}",
-        f"profile: {environment.get('profile')}",
+        f"version: {field(app.get('version'))} ({'portable' if app.get('portable') else 'installed' if app.get('managed') else 'source'})",
+        f"os: {field(environment.get('os'))}",
+        f"python: {field(app.get('python'))}",
+        f"gpu: {field(gpu_name)}",
+        f"model: {field(whisper.get('model'))} / {field(whisper.get('device'))} / {field(whisper.get('compute_type'))}",
+        f"audio: source={field(audio.get('source'))} vad={field(environment.get('vad', {}).get('engine'))}",
+        f"packages: faster_whisper={field(packages.get('faster_whisper'))} ctranslate2={field(packages.get('ctranslate2'))} torch={field(packages.get('torch'))}",
+        f"profile: {field(environment.get('profile'))}",
     ]
     return "\n".join(lines)
 
 
+# Only structured files go in, each through the allow-list. Transcripts (.txt, .md), audio
+# and free-form logs stay out: nothing in them says which words are structure.
+_LOG_FILE_SCRUBBERS: dict[str, Callable[[str], str]] = {
+    ".jsonl": scrub_jsonl,
+    ".json": scrub_json_text,
+    ".csv": scrub_csv,
+}
+
+
 def _log_folder_entries(log_dir: Path) -> Iterable[tuple[str, bytes]]:
     for path in sorted(log_dir.glob("*")):
-        if not path.is_file() or path.name in TRANSCRIPT_FILES:
+        scrub = _LOG_FILE_SCRUBBERS.get(path.suffix.lower())
+        if scrub is None or not path.is_file():
             continue
-        name = f"logs/{log_dir.name}/{path.name}"
-        if path.suffix == ".jsonl":
-            yield name, scrub_jsonl(path.read_text(encoding="utf-8", errors="replace")).encode("utf-8")
-        elif path.suffix == ".json":
-            yield name, scrub_json_text(path.read_text(encoding="utf-8", errors="replace")).encode("utf-8")
-        elif path.suffix in {".csv", ".log"}:
-            yield name, path.read_bytes()
-        # anything else (.md, .txt, .wav) stays out of the privacy bundle
+        text = path.read_text(encoding="utf-8", errors="replace")
+        yield f"logs/{log_dir.name}/{path.name}", scrub(text).encode("utf-8")
 
 
 def make_issue_bundle(
@@ -275,8 +409,10 @@ def make_issue_bundle(
 
         add("README.txt", (
             "Streamer Caption bug report bundle\n"
-            "Caption text, summaries, prompts and word lists were removed before packing.\n"
-            "Strings that carried spoken words appear as [redacted N chars].\n"
+            "Strings were kept only under known structural keys (event types, times,\n"
+            "engine/model/device names, error messages). Captions, summaries, keywords,\n"
+            "recaps, speaker labels, prompts and word lists appear as [redacted N chars].\n"
+            "Paths under the user profile appear as %USERPROFILE%.\n"
         ).encode("utf-8"))
         add("environment.json", json.dumps(environment, ensure_ascii=False, indent=2).encode("utf-8"))
         add("config.json", json.dumps(scrub_config(config), ensure_ascii=False, indent=2).encode("utf-8"))

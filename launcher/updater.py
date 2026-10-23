@@ -136,8 +136,16 @@ def _resolve_github_release(repository: str, allow_prerelease: bool) -> dict[str
         releases = _request_json(f"https://api.github.com/repos/{repository}/releases?per_page=20")
         if not isinstance(releases, list):
             raise UpdateError("unexpected GitHub releases response")
+        # Runtime releases (runtime-*) share the repository; only an app release carries the manifest.
         release = next(
-            (item for item in releases if isinstance(item, dict) and not item.get("draft")),
+            (
+                item
+                for item in releases
+                if isinstance(item, dict)
+                and not item.get("draft")
+                and not str(item.get("tag_name", "")).startswith("runtime-")
+                and MANIFEST_ASSET in _asset_map(item)
+            ),
             None,
         )
         if release is None:
@@ -426,11 +434,12 @@ def runtime_info_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | Non
 
 def install_runtime_archive(install_root: Path, archive: Path, info: dict[str, Any]) -> dict[str, Any]:
     """Verify and swap in a runtime ZIP (.venv/ layout). The old runtime is replaced only after a full extract."""
-    expected = info.get("sha256") or ""
-    if expected:
-        actual = _sha256(archive)
-        if actual != expected:
-            raise UpdateError(f"runtime SHA-256 mismatch: expected {expected}, got {actual}")
+    expected = str(info.get("sha256") or "").strip().lower()
+    if len(expected) != 64:
+        raise UpdateError("runtime manifest has no SHA-256; refusing to install an unverified runtime")
+    actual = _sha256(archive)
+    if actual != expected:
+        raise UpdateError(f"runtime SHA-256 mismatch: expected {expected}, got {actual}")
     runtime_root = install_root / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
     staging = runtime_root / f".staging-{uuid.uuid4().hex}"

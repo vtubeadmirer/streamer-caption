@@ -35,6 +35,18 @@ def main() -> int:
     untouched = _anchor_user_data_paths(deep_merge(DEFAULTS, {"log": {"dir": old + r"\logs"}}), PROJECT_ROOT)
     assert untouched["log"]["dir"] == old + r"\logs"
     assert DEFAULTS["vad"]["engine"] == "silero"
+
+    # Installs that stored the old full-default snapshot (schema 1, energy VAD) move to Silero;
+    # an explicit schema-2 choice of energy is respected.
+    import json, tempfile
+    from core.config import load_config
+    with tempfile.TemporaryDirectory() as directory:
+        cfg = Path(directory) / "config.json"
+        cfg.write_text(json.dumps({"vad": {"engine": "energy"}}), encoding="utf-8")
+        assert load_config(cfg)["vad"]["engine"] == "silero"
+        cfg.write_text(json.dumps({"config_schema": 2, "vad": {"engine": "energy"}}), encoding="utf-8")
+        assert load_config(cfg)["vad"]["engine"] == "energy"
+        assert load_config(cfg)["config_schema"] == 2
     print("user_data_paths_ok")
     return 0
 

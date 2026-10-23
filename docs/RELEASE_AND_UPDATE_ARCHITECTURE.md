@@ -150,5 +150,10 @@ a venv-shaped tree so every existing .bat keeps working) and published by the
 The app release manifest carries `runtime_version`, `runtime_asset_name`,
 `runtime_sha256`, `runtime_size`, `runtime_release_tag` and `runtime_url`; the
 release workflow fills them from the published `runtime-manifest.json`.
+A runtime release is never replaced (installed apps pin its SHA-256) and never
+marked Latest (the updater reads `/releases/latest`); new requirements mean a new
+`runtime_version`. The runtime ships NVIDIA cuBLAS (`nvidia-cublas-cu12`) because
+ctranslate2 loads `cublas64_12.dll` by name at the first GPU matmul; the baseline
+engine puts its `bin` folder on `PATH`, so only the NVIDIA driver is required.
 `updater.py update` calls `ensure_runtime()` before activating a new app version,
 so an app release that needs a newer runtime never starts on the old one.

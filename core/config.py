@@ -22,7 +22,10 @@ USER_DATA_ROOT = _user_data_root()
 CONFIG_PATH = USER_DATA_ROOT / "config.json"
 
 
+CONFIG_SCHEMA = 2  # 2: Silero VAD became the default; stored "energy" from schema 1 is migrated
+
 DEFAULTS: dict[str, Any] = {
+    "config_schema": CONFIG_SCHEMA,
     "app": {"mode": "baseline_v1_mode", "profile": "custom"},
     "caption": {
         "style": "classic_outline",
@@ -376,7 +379,19 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
         return copy.deepcopy(DEFAULTS)
     with path.open("r", encoding="utf-8") as f:
         user_config = json.load(f)
-    return _anchor_user_data_paths(deep_merge(DEFAULTS, user_config))
+    return _anchor_user_data_paths(_migrate(deep_merge(DEFAULTS, user_config), user_config))
+
+
+def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade settings that first-run setup froze as a full snapshot of older defaults."""
+    try:
+        stored_schema = int(stored.get("config_schema", 1))
+    except (TypeError, ValueError):
+        stored_schema = 1
+    if stored_schema < 2 and config.get("vad", {}).get("engine") == "energy":
+        config["vad"]["engine"] = "silero"
+    config["config_schema"] = CONFIG_SCHEMA
+    return config
 
 
 def _bounded_number(

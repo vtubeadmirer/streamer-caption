@@ -154,7 +154,7 @@ def _repository(source: Path) -> str:
 
 def _runtime_fields(template: dict[str, Any], dist: Path, repository: str) -> dict[str, Any]:
     """Describe the portable runtime: from dist/runtime-manifest.json when a runtime was built, else the template."""
-    runtime_version = str(template.get("runtime_version") or "py312-v1")
+    runtime_version = str(template.get("runtime_version") or "py312-v2")
     asset_name = str(template.get("runtime_asset_name") or f"runtime-{runtime_version}.zip")
     sha256 = str(template.get("runtime_sha256") or "")
     size = int(template.get("runtime_size") or 0)
@@ -184,7 +184,7 @@ PORTABLE_README = (
     "\n"
     "1. Put this folder anywhere (avoid synced folders such as OneDrive).\n"
     "2. Double-click StreamerCaption.bat.\n"
-    "   - The first run downloads the runtime (about 1 GB) and the speech model once; a progress bar is shown.\n"
+    "   - The first run downloads the runtime (about 800 MB) and the speech model once; a progress bar is shown.\n"
     "   - Then the browser opens the first-time setup page: pick the microphone and copy the OBS URLs.\n"
     "3. From then on one double-click starts the captions.\n"
     "\n"

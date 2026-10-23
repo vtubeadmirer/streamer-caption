@@ -156,10 +156,16 @@ class CaptionWebSocketServer:
                 "metadata": event.metadata,
             }
         if event.event_type == "caption_hidden":
+            # Overlays only need to know *that* a caption was suppressed and from which
+            # source; the blocked/hallucinated text itself must not leave the process.
             return {
                 "type": "caption_hidden",
                 "audio_offset_sec": event.audio_offset_sec,
-                "metadata": event.metadata,
+                "metadata": {
+                    key: event.metadata[key]
+                    for key in ("audio_source", "source_label", "defense_reason")
+                    if key in event.metadata
+                },
             }
         return {
             "type": event.event_type,

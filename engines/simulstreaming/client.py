@@ -249,7 +249,8 @@ class SimulStreamingClient:
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError:
-                    self._record_error("Invalid SimulStreaming JSON: " + line[:160])
+                    # The raw line can be caption text; record only its shape, never its content.
+                    self._record_error(f"Invalid SimulStreaming JSON ({len(line)} chars)")
                     continue
                 if isinstance(payload, dict):
                     self._messages.put(payload)

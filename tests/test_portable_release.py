@@ -15,6 +15,11 @@ from tools.build_public_release import build_public_release
 
 def main() -> int:
     version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
+    template = json.loads((ROOT / "release-manifest.json").read_text(encoding="utf-8-sig"))
+    runtime_tag = template["runtime_release_tag"]
+    # runtime.yml publishes runtime-<version>.zip under the tag runtime-<version>; a half-bumped template breaks portable installs.
+    assert runtime_tag == f"runtime-{template['runtime_version']}", template
+    assert template["runtime_asset_name"] == f"runtime-{template['runtime_version']}.zip", template
     with tempfile.TemporaryDirectory() as directory:
         dist = Path(directory)
         (dist / "runtime-manifest.json").write_text(json.dumps({
@@ -24,7 +29,7 @@ def main() -> int:
         manifest = json.loads(Path(built["manifest"]).read_text(encoding="utf-8"))
         assert manifest["runtime_version"] == "py312-test", manifest
         assert manifest["runtime_sha256"] == "a" * 64
-        assert manifest["runtime_url"].endswith("/releases/download/runtime-py312-v1/runtime-py312-test.zip"), manifest["runtime_url"]
+        assert manifest["runtime_url"].endswith(f"/releases/download/{runtime_tag}/runtime-py312-test.zip"), manifest["runtime_url"]
         assert manifest["portable_asset_name"] == f"StreamerCaption-{version}-portable.zip"
         assert len(manifest["portable_sha256"]) == 64
 
@@ -55,8 +60,8 @@ def main() -> int:
         (dist / "runtime-manifest.json").unlink()
         built = build_public_release(ROOT, dist)
         manifest = json.loads(Path(built["manifest"]).read_text(encoding="utf-8"))
-        assert manifest["runtime_version"] == "py312-v1" and manifest["runtime_asset_name"] == "runtime-py312-v1.zip"
-        assert manifest["runtime_url"].endswith("/releases/download/runtime-py312-v1/runtime-py312-v1.zip")
+        assert manifest["runtime_version"] == template["runtime_version"] and manifest["runtime_asset_name"] == template["runtime_asset_name"]
+        assert manifest["runtime_url"].endswith(f"/releases/download/{runtime_tag}/{template['runtime_asset_name']}"), manifest["runtime_url"]
 
     for script in sorted((ROOT / "launcher").glob("*.ps1")) + sorted((ROOT / "tools").glob("*.ps1")):
         raw = script.read_bytes()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from collections.abc import Iterable
@@ -9,6 +10,33 @@ from typing import Any
 from core.engine_contract import CaptionEngine
 from core.events import CaptionEvent
 from features.slang import SlangDictionary
+
+
+def _package_dir(module: str, fallback: Path) -> Path:
+    # The portable runtime is an embedded CPython whose sys.prefix is .venv\Scripts, so a
+    # prefix-relative guess misses its site-packages; ask the import system first.
+    try:
+        spec = importlib.util.find_spec(module)
+    except (ImportError, ValueError):
+        spec = None
+    locations = list(spec.submodule_search_locations or []) if spec is not None else []
+    return Path(locations[0]) if locations else fallback
+
+
+def _prepend_to_path(directories: list[Path]) -> None:
+    current = os.environ.get("PATH", "")
+    known = {
+        os.path.normcase(os.path.normpath(entry))
+        for entry in current.split(os.pathsep)
+        if entry
+    }
+    fresh = [
+        str(directory)
+        for directory in directories
+        if os.path.normcase(os.path.normpath(str(directory))) not in known
+    ]
+    if fresh:
+        os.environ["PATH"] = os.pathsep.join(fresh + ([current] if current else []))
 
 
 class BaselineEngine(CaptionEngine):
@@ -51,27 +79,26 @@ class BaselineEngine(CaptionEngine):
         self._registered_dll_dirs: list[str] = []
 
     def _register_cuda_dll_dirs(self) -> list[str]:
-        registered: list[str] = []
-        candidates = [
-            Path(sys.prefix)
-            / "Lib"
-            / "site-packages"
-            / "nvidia"
-            / "cublas"
-            / "bin",
-            Path(sys.prefix)
-            / "Lib"
-            / "site-packages"
-            / "nvidia"
-            / "cudnn"
-            / "bin",
-            Path(sys.prefix) / "Lib" / "site-packages" / "ctranslate2",
+        if os.name != "nt":
+            return []
+        site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+        nvidia_bins = [
+            _package_dir(f"nvidia.{name}", site_packages / "nvidia" / name) / "bin"
+            for name in ("cublas", "cudnn")
         ]
+        candidates = [
+            *nvidia_bins,
+            _package_dir("ctranslate2", site_packages / "ctranslate2"),
+        ]
+        registered: list[str] = []
         for path in candidates:
-            if path.exists():
+            if path.is_dir():
                 handle = os.add_dll_directory(str(path))
                 self._dll_handles.append(handle)
                 registered.append(str(path))
+        # ctranslate2 opens cublas64_12.dll with a bare LoadLibrary, which searches PATH but
+        # ignores add_dll_directory(); without this only a system-wide CUDA Toolkit is found.
+        _prepend_to_path([path for path in nvidia_bins if path.is_dir()])
         self._registered_dll_dirs = registered
         return registered
 

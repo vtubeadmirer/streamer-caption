@@ -17,11 +17,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate release system
-        shell: pwsh
-        run: |
-          python tests/test_release_system.py
-          python tests/test_updater_cache.py
+      - name: Install app requirements for the test suite
+        run: python -m pip install --quiet -r requirements.txt
+      - name: Run the CI test set
+        run: python tools/ci_check.py
       - name: Validate tag matches VERSION
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -30,19 +29,29 @@ jobs:
           if ("${{ github.ref_name }}" -ne $expected) {
             throw "Tag ${{ github.ref_name }} does not match VERSION $expected"
           }
-      - name: Fetch the published runtime manifest (optional)
+      - name: Fetch the published runtime manifest (required for a tagged release)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $tag = (Get-Content release-manifest.json -Raw | ConvertFrom-Json).runtime_release_tag
-          if ($tag) {
-            gh release download $tag --pattern runtime-manifest.json --dir dist 2>$null
-            if ($LASTEXITCODE -ne 0) { Write-Warning "No runtime release $tag yet; manifest keeps the template runtime fields." }
+          if (-not $tag) { throw "release-manifest.json has no runtime_release_tag" }
+          gh release download $tag --pattern runtime-manifest.json --dir dist
+          if ($LASTEXITCODE -ne 0) {
+            if ("${{ github.ref }}" -like "refs/tags/*") { throw "Runtime release $tag is not published yet; publish it (runtime.yml) before tagging the app." }
+            Write-Warning "No runtime release $tag yet; this untagged build keeps the template runtime fields."
           }
       - name: Build privacy-safe release assets
         run: python tools/build_public_release.py
+      - name: Refuse to publish an unverifiable portable bundle
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $m = Get-Content dist/release-manifest.json -Raw | ConvertFrom-Json
+          if (-not $m.runtime_sha256 -or $m.runtime_sha256.Length -ne 64 -or -not $m.runtime_size) {
+            throw "release manifest has no runtime SHA-256/size; portable installs could not verify the runtime"
+          }
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

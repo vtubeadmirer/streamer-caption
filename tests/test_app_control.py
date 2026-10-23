@@ -143,6 +143,19 @@ def main() -> int:
             code, reveal = http("POST", "/api/support/reveal", {"path": str(ROOT / "README.md")})
             assert code == 400, reveal
 
+            # Cross-site POSTs (a random web page the streamer has open) are refused; same-origin passes.
+            evil = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/app/restart", data=b"{}", method="POST",
+                                          headers={"Content-Type": "application/json", "Origin": "https://evil.example"})
+            try:
+                urllib.request.urlopen(evil, timeout=5)
+                raise AssertionError("cross-origin restart was accepted")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 403, exc.code
+            assert control.restart_requested is False
+            same = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/update/status", method="GET",
+                                          headers={"Origin": f"http://127.0.0.1:{PORT}"})
+            assert urllib.request.urlopen(same, timeout=5).status == 200
+
             code, restart = http("POST", "/api/app/restart", {"reason": "test"})
             assert code == 200 and restart["restart_requested"] is True and restart["exit_code"] == 76, restart
             code, status = http("GET", "/api/status")

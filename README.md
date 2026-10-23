@@ -10,7 +10,7 @@ Real-time Korean captions for streamers, running entirely on your own NVIDIA GPU
    `StreamerCaption-<버전>-portable.zip`을 받아 아무 폴더에나 풉니다.
    (OneDrive 같은 동기화 폴더는 피하세요.)
 2. `StreamerCaption.bat`을 더블클릭합니다.
-   - 처음 한 번만 실행 환경(약 250 MB)을 받고, 이어서 음성 인식 모델(1.6~3 GB)을 받습니다.
+   - 처음 한 번만 실행 환경(약 800 MB)을 받고, 이어서 음성 인식 모델(1.6~3 GB)을 받습니다.
      진행률이 표시됩니다.
    - 설정 페이지가 브라우저에 열립니다: 마이크 선택 → (선택) PC 소리도 자막으로 →
      OBS 주소 복사 → 저장하고 시작.
@@ -646,17 +646,18 @@ binaries remain subject to their own license terms. See
 
 1. Unzip anywhere (not inside a synced folder such as OneDrive).
 2. Double-click `StreamerCaption.bat`.
-   - First run only: the shared Python runtime (about 250 MB, `runtime-py312-v1.zip`
-     from the `runtime-py312-v1` GitHub release) is downloaded with a progress bar,
-     verified by SHA-256 and unpacked into `runtime/.venv`. The speech model is
-     downloaded when captions start.
+   - First run only: the shared Python runtime (about 800 MB, `runtime-py312-v2.zip`
+     from the `runtime-py312-v2` GitHub release) is downloaded with a progress bar,
+     verified by SHA-256 and unpacked into `runtime/.venv`. It bundles NVIDIA cuBLAS,
+     so GPU captions need only the NVIDIA driver, not a CUDA Toolkit. The speech model
+     is downloaded when captions start.
    - The browser then opens `http://127.0.0.1:8766/setup`: pick the microphone,
      optionally turn on dual (PC playback) captions, copy the OBS URLs, choose how
      recaps are generated. Everything is saved under `user-data/` and survives updates.
 3. Every later run is one double-click: captions start and the admin page is one
    click away.
 
-Offline PCs: download `runtime-py312-v1.zip` once, put it next to
+Offline PCs: download `runtime-py312-v2.zip` once, put it next to
 `StreamerCaption.bat`, and it is used instead of the network. The layout is the
 same side-by-side scheme as the installed version (`versions/<ver>`, `runtime/`,
 `user-data/`), so updates and rollback work identically; when a release needs a
