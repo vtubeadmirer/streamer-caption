@@ -46,6 +46,7 @@ def main() -> int:
             },
         },
     ]
+    path.parent.mkdir(parents=True, exist_ok=True)  # reports/ is gitignored: absent on a fresh checkout (CI)
     with path.open("w", encoding="utf-8") as file:
         for row in rows:
             file.write(
