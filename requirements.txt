@@ -3,7 +3,7 @@ numpy==2.5.1
 sounddevice==0.5.5
 av==18.0.0
 silero-vad==6.2.1
-websockets==16.1
+websockets==17.1
 SoundCard==0.4.6
 # ctranslate2 4.8.x is a CUDA 12.8 build that loads cublas64_12.dll at the first GPU matmul;
 # shipping cuBLAS here means GPU captions need only the NVIDIA driver, not a CUDA Toolkit.
