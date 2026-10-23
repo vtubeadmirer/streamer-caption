@@ -196,7 +196,7 @@
         const status = await getJson("/api/status");
         if (wentDown && !status.restart_requested) { $("saveStatus").textContent = "다시 시작했습니다. 이 창을 닫고 방송을 시작하세요."; return; }
       } catch (error) { wentDown = true; }
-      if (Date.now() - started < 180000) setTimeout(tick, 1500);
+      if (Date.now() - started < 600000) setTimeout(tick, 1500);
       else $("saveStatus").textContent = "자막 프로그램이 다시 올라오지 않습니다. StreamerCaption.bat을 다시 실행해 주세요.";
     };
     setTimeout(tick, 2500);

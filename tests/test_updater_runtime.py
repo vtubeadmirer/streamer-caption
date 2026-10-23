@@ -1,4 +1,5 @@
-"""Runtime upgrades: the updater swaps the shared runtime only when a release asks for a different one, after SHA-256 and layout checks."""
+"""Runtime upgrades are staged by the updater (download + SHA-256 + runtime.json) and swapped in by
+bootstrap.ps1 before the next start; app updates also refresh the root launcher files."""
 from __future__ import annotations
 
 import hashlib
@@ -18,7 +19,6 @@ import updater  # noqa: E402
 def make_runtime_zip(path: Path, version: str) -> str:
     with zipfile.ZipFile(path, "w") as bundle:
         bundle.writestr(".venv/Scripts/python.exe", b"fake python")
-        bundle.writestr(".venv/Lib/site-packages/README", b"deps")
         bundle.writestr(".venv/RUNTIME_VERSION", version + "\n")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -28,8 +28,11 @@ def main() -> int:
         root = Path(directory)
         source = root / "src"
         source.mkdir()
-        zip_v1 = source / "runtime-py312-v1.zip"
-        sha_v1 = make_runtime_zip(zip_v1, "py312-v1")
+        zip_v2 = source / "runtime-py312-v2.zip"
+        sha_v2 = make_runtime_zip(zip_v2, "py312-v2")
+        manifest = {"version": "1.2.0", "runtime_version": "py312-v2", "runtime_asset_name": "runtime-py312-v2.zip",
+                    "runtime_sha256": sha_v2, "runtime_size": zip_v2.stat().st_size,
+                    "runtime_url": "https://example.test/releases/runtime-py312-v2.zip"}
 
         downloads: list[str] = []
         original_download = updater._download
@@ -41,44 +44,67 @@ def main() -> int:
 
         updater._download = fake_download
         try:
-            manifest = {"version": "1.2.0", "runtime_version": "py312-v1", "runtime_asset_name": "runtime-py312-v1.zip",
-                        "runtime_sha256": sha_v1, "runtime_size": zip_v1.stat().st_size, "runtime_url": "https://example.test/releases/runtime-py312-v1.zip"}
+            # Venv install (no runtime.json): runtime fields in the manifest are ignored.
+            result = updater.stage_runtime(root, manifest)
+            assert result["runtime_pending"] is False and not downloads, result
 
-            # Fresh portable root: runtime is downloaded and installed.
-            result = updater.ensure_runtime(root, manifest)
-            assert result["runtime_installed"] is True, result
-            assert (root / "runtime" / ".venv" / "Scripts" / "python.exe").read_bytes() == b"fake python"
-            assert updater.current_runtime_version(root) == "py312-v1"
-            assert json.loads((root / "runtime.json").read_text(encoding="utf-8"))["sha256"] == sha_v1
-            assert not (root / "downloads" / "runtime-py312-v1.zip").exists(), "archive is removed after install"
+            # Portable install on py312-v1: the v2 runtime is downloaded, verified, kept in downloads/
+            # and runtime.json now names it; the installed runtime is untouched until bootstrap swaps it.
+            venv = root / "runtime" / ".venv"
+            venv.mkdir(parents=True)
+            (venv / "RUNTIME_VERSION").write_text("py312-v1\n", encoding="utf-8")
+            (root / "runtime.json").write_text(json.dumps({"runtime_version": "py312-v1", "asset_name": "runtime-py312-v1.zip", "sha256": "a" * 64, "size": 1, "url": "https://example.test/v1.zip"}), encoding="utf-8")
+            result = updater.stage_runtime(root, manifest)
+            assert result["runtime_pending"] is True and result["runtime_version"] == "py312-v2", result
+            assert (root / "downloads" / "runtime-py312-v2.zip").exists(), "archive stays for bootstrap.ps1"
+            assert updater.current_runtime_version(root) == "py312-v1", "no in-process swap"
+            staged = json.loads((root / "runtime.json").read_text(encoding="utf-8"))
+            assert staged["runtime_version"] == "py312-v2" and staged["sha256"] == sha_v2 and staged["asset_name"] == "runtime-py312-v2.zip"
             assert len(downloads) == 1
 
-            # Same runtime again: no download, no change.
-            result = updater.ensure_runtime(root, manifest)
-            assert result["runtime_installed"] is False and len(downloads) == 1
+            # Staging again reuses the verified archive.
+            result = updater.stage_runtime(root, manifest)
+            assert result["runtime_pending"] is True and len(downloads) == 1
 
-            # Manifest without runtime fields (venv install): no-op.
-            result = updater.ensure_runtime(root, {"version": "1.2.1"})
-            assert result["runtime_installed"] is False and len(downloads) == 1
+            # Once bootstrap installed it (marker updated), nothing is pending.
+            (venv / "RUNTIME_VERSION").write_text("py312-v2\n", encoding="utf-8")
+            assert updater.stage_runtime(root, manifest)["runtime_pending"] is False
 
-            # New runtime version replaces the old one atomically.
-            zip_v2 = source / "runtime-py312-v2.zip"
-            sha_v2 = make_runtime_zip(zip_v2, "py312-v2")
-            manifest_v2 = {**manifest, "runtime_version": "py312-v2", "runtime_asset_name": "runtime-py312-v2.zip", "runtime_sha256": sha_v2, "runtime_url": "https://example.test/releases/runtime-py312-v2.zip"}
-            result = updater.ensure_runtime(root, manifest_v2)
-            assert result["runtime_installed"] is True and updater.current_runtime_version(root) == "py312-v2"
-            assert not any(p.name.startswith(".old-") or p.name.startswith(".staging-") for p in (root / "runtime").iterdir())
-
-            # Wrong hash is refused and the current runtime stays.
-            bad = {**manifest, "runtime_version": "py312-v3", "runtime_asset_name": "runtime-py312-v1.zip", "runtime_sha256": "0" * 64}
+            # Wrong hash: refused, archive removed, runtime.json untouched.
+            bad = {**manifest, "runtime_version": "py312-v3", "runtime_asset_name": "runtime-py312-v2.zip", "runtime_sha256": "0" * 64}
             try:
-                updater.ensure_runtime(root, bad)
+                updater.stage_runtime(root, bad)
                 raise AssertionError("hash mismatch accepted")
             except updater.UpdateError as exc:
                 assert "SHA-256" in str(exc)
-            assert updater.current_runtime_version(root) == "py312-v2"
+            assert not (root / "downloads" / "runtime-py312-v2.zip").exists()
+            assert json.loads((root / "runtime.json").read_text(encoding="utf-8"))["runtime_version"] == "py312-v2"
+
+            # Empty hash: refused before downloading.
+            empty = {**manifest, "runtime_version": "py312-v4", "runtime_asset_name": "runtime-py312-v4.zip", "runtime_sha256": ""}
+            try:
+                updater.stage_runtime(root, empty)
+                raise AssertionError("empty hash accepted")
+            except updater.UpdateError as exc:
+                assert "SHA-256" in str(exc)
         finally:
             updater._download = original_download
+
+        # Launcher sync: a new version's launcher files replace the root copies (unchanged files are skipped).
+        version_root = root / "versions" / "1.2.0"
+        (version_root / "launcher").mkdir(parents=True)
+        (root / "launcher").mkdir()
+        (root / "launcher" / "updater.py").write_text("old updater\n", encoding="utf-8")
+        (root / "launcher" / "launcher.ps1").write_text("same\n", encoding="utf-8")
+        (version_root / "launcher" / "updater.py").write_text("new updater\n", encoding="utf-8")
+        (version_root / "launcher" / "launcher.ps1").write_text("same\n", encoding="utf-8")
+        (version_root / "launcher" / "bootstrap.ps1").write_text("new bootstrap\n", encoding="utf-8")
+        synced = updater.sync_launcher(root, version_root)
+        assert sorted(synced) == ["bootstrap.ps1", "updater.py"], synced
+        assert (root / "launcher" / "updater.py").read_text(encoding="utf-8") == "new updater\n"
+        assert (root / "launcher" / "bootstrap.ps1").read_text(encoding="utf-8") == "new bootstrap\n"
+        assert not list((root / "launcher").glob("*.new"))
+        assert updater.sync_launcher(root, root / "versions" / "missing") == []
 
     print("updater_runtime_ok")
     return 0

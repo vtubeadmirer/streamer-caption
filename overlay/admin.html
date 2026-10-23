@@ -1237,7 +1237,9 @@
       progress.style.display = "none";
       if (install.state === "done") {
         show = true;
-        updateText.textContent = t(`업데이트 ${install.current_version} 설치 완료. 다시 시작하면 적용됩니다.`, `Version ${install.current_version} is installed. Restart to use it.`);
+        updateText.textContent = install.runtime_pending
+          ? t(`업데이트 ${install.current_version} 설치 완료. 다시 시작하면 새 실행 환경(1~2분 소요)과 함께 적용됩니다.`, `Version ${install.current_version} is installed. Restart to apply it; the new runtime takes 1-2 minutes to unpack.`)
+          : t(`업데이트 ${install.current_version} 설치 완료. 다시 시작하면 적용됩니다.`, `Version ${install.current_version} is installed. Restart to use it.`);
         showButtons(["restart", "later"]);
       } else if (["starting", "checking", "downloading"].includes(install.state)) {
         show = true;
@@ -1315,7 +1317,7 @@
         } catch (error) {
           wentDown = true;
         }
-        if (Date.now() - started < 180000) setTimeout(tick, 1500);
+        if (Date.now() - started < 600000) setTimeout(tick, 1500);
         else { state.textContent = t("앱이 다시 올라오지 않습니다. StreamerCaption.bat을 다시 실행하세요.", "The app did not come back. Start StreamerCaption.bat again."); restartPending = false; }
       };
       setTimeout(tick, 2500);

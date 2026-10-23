@@ -171,5 +171,19 @@ try {
 $launcherArgs = @{ InstallRoot = $InstallRoot }
 if ($NoUpdate) { $launcherArgs.NoUpdate = $true }
 if (-not $Menu) { $launcherArgs.Direct = $true }
-& (Join-Path $PSScriptRoot "launcher.ps1") @launcherArgs
-exit $LASTEXITCODE
+# Exit code 77 from the launcher: an in-app update staged a new runtime in downloads/ and
+# rewrote runtime.json. Nothing runs from runtime\.venv now, so swap it and start again.
+do {
+    & (Join-Path $PSScriptRoot "launcher.ps1") @launcherArgs
+    $launcherExit = $LASTEXITCODE
+    if ($launcherExit -eq 77) {
+        try {
+            Say "새 실행 환경을 설치합니다 (한 번만, 1~2분)."
+            Ensure-Runtime
+        } catch {
+            Write-Host "실행 환경 교체에 실패했습니다: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
+    }
+} while ($launcherExit -eq 77)
+exit $launcherExit

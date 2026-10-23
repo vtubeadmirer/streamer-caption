@@ -107,6 +107,20 @@ if (-not $NoUpdate -and (Test-Path -LiteralPath (Join-Path $InstallRoot "updater
 # Exit code 76 means "start me again": the admin page asked for a restart after a
 # settings change or an in-app update. state.json is re-read so a new version starts.
 $RelaunchExitCode = 76
+# 77 tells bootstrap.ps1 that an update staged a new runtime (runtime.json differs from the
+# installed marker); bootstrap swaps it in while no Python is running, then starts us again.
+$RuntimeSwapExitCode = 77
+
+function Test-RuntimePending {
+    $info = Join-Path $InstallRoot "runtime.json"
+    $marker = Join-Path $InstallRoot "runtime\.venv\RUNTIME_VERSION"
+    if (-not (Test-Path -LiteralPath $info) -or -not (Test-Path -LiteralPath $marker)) { return $false }
+    try {
+        $wanted = [string](Get-Content -LiteralPath $info -Raw | ConvertFrom-Json).runtime_version
+        $current = (Get-Content -LiteralPath $marker -Raw).Trim()
+        return ($wanted -and $wanted -ne $current)
+    } catch { return $false }
+}
 $env:STREAMER_CAPTION_USER_DATA = $UserData
 $env:STREAMER_CAPTION_SUPERVISED = "1"
 do {
@@ -139,6 +153,11 @@ do {
         Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
     }
     if ($exitCode -eq $RelaunchExitCode) {
+        if (Test-RuntimePending) {
+            Write-Host ""
+            Write-Host "A new runtime was downloaded; installing it before restarting..." -ForegroundColor Cyan
+            exit $RuntimeSwapExitCode
+        }
         Write-Host ""
         Write-Host "Restarting Streamer Caption..." -ForegroundColor Cyan
         Start-Sleep -Seconds 1

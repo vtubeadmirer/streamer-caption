@@ -403,7 +403,8 @@ def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path)
     state["last_update_sha256"] = actual
     state["last_update_status"] = "installed"
     _atomic_json(install_root / "state.json", state)
-    return {"installed": version, "previous_version": state.get("previous_version"), "path": str(target)}
+    synced = sync_launcher(install_root, target)
+    return {"installed": version, "previous_version": state.get("previous_version"), "path": str(target), "launcher_synced": synced}
 
 
 RUNTIME_MARKER = "RUNTIME_VERSION"
@@ -432,51 +433,58 @@ def runtime_info_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | Non
     }
 
 
-def install_runtime_archive(install_root: Path, archive: Path, info: dict[str, Any]) -> dict[str, Any]:
-    """Verify and swap in a runtime ZIP (.venv/ layout). The old runtime is replaced only after a full extract."""
+LAUNCHER_FILES = ("bootstrap.ps1", "launcher.ps1", "updater.py", "StreamerCaption.bat")
+
+
+def sync_launcher(install_root: Path, version_root: Path) -> list[str]:
+    """Copy the freshly installed version's launcher files over <root>/launcher so fixes to the
+    bootstrap/launcher/updater reach existing installs. PowerShell reads a script fully before
+    running it, so replacing the file under a running launcher is safe; it takes effect next start."""
+    source_dir = version_root / "launcher"
+    target_dir = install_root / "launcher"
+    if not source_dir.is_dir() or not target_dir.is_dir():
+        return []
+    synced: list[str] = []
+    for name in LAUNCHER_FILES:
+        source = source_dir / name
+        if not source.is_file():
+            continue
+        target = target_dir / name
+        if target.exists() and target.read_bytes() == source.read_bytes():
+            continue
+        temporary = target.with_suffix(target.suffix + ".new")
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, target)
+        synced.append(name)
+    return synced
+
+
+def stage_runtime(install_root: Path, manifest: dict[str, Any], progress: ProgressHook | None = None) -> dict[str, Any]:
+    """Portable installs only: download and verify the runtime a release needs, then point
+    runtime.json at it. The swap itself happens in bootstrap.ps1 on the next start, because the
+    running app (and this updater) execute from runtime/.venv and Windows cannot rename a
+    directory with mapped DLLs. Venv installs (no runtime.json) are left alone."""
+    runtime_json = install_root / "runtime.json"
+    info = runtime_info_from_manifest(manifest)
+    current = current_runtime_version(install_root)
+    if info is None or not runtime_json.exists():
+        return {"runtime_version": current, "runtime_pending": False}
+    if current == info["runtime_version"]:
+        return {"runtime_version": current, "runtime_pending": False}
     expected = str(info.get("sha256") or "").strip().lower()
     if len(expected) != 64:
-        raise UpdateError("runtime manifest has no SHA-256; refusing to install an unverified runtime")
-    actual = _sha256(archive)
-    if actual != expected:
-        raise UpdateError(f"runtime SHA-256 mismatch: expected {expected}, got {actual}")
-    runtime_root = install_root / "runtime"
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    staging = runtime_root / f".staging-{uuid.uuid4().hex}"
-    try:
-        _safe_extract(archive, staging)
-        extracted = staging / ".venv"
-        if not (extracted / "Scripts" / "python.exe").exists():
-            raise UpdateError("runtime archive has no .venv/Scripts/python.exe")
-        marker = (extracted / RUNTIME_MARKER).read_text(encoding="utf-8-sig").strip() if (extracted / RUNTIME_MARKER).exists() else ""
-        if marker and marker != info["runtime_version"]:
-            raise UpdateError(f"runtime archive is {marker}, expected {info['runtime_version']}")
-        target = runtime_root / ".venv"
-        if target.exists():
-            old = runtime_root / f".old-{uuid.uuid4().hex}"
-            target.rename(old)
-            shutil.rmtree(old, ignore_errors=True)
-        extracted.rename(target)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    _atomic_json(install_root / "runtime.json", info)
-    return {"runtime_version": info["runtime_version"], "runtime_installed": True}
-
-
-def ensure_runtime(install_root: Path, manifest: dict[str, Any], progress: ProgressHook | None = None) -> dict[str, Any]:
-    """Download the runtime a release needs when the installed one differs. No-op for venv installs without runtime fields."""
-    info = runtime_info_from_manifest(manifest)
-    if info is None:
-        return {"runtime_version": current_runtime_version(install_root), "runtime_installed": False}
-    if current_runtime_version(install_root) == info["runtime_version"]:
-        return {"runtime_version": info["runtime_version"], "runtime_installed": False}
+        raise UpdateError("release manifest has no runtime SHA-256; refusing to stage an unverified runtime")
     archive = install_root / "downloads" / info["asset_name"]
+    if archive.exists() and _sha256(archive) != expected:
+        archive.unlink()
     if not archive.exists():
         _download(info["url"], archive, progress, label=f"runtime {info['runtime_version']}")
-    try:
-        return install_runtime_archive(install_root, archive, info)
-    finally:
-        archive.unlink(missing_ok=True)
+        actual = _sha256(archive)
+        if actual != expected:
+            archive.unlink(missing_ok=True)
+            raise UpdateError(f"runtime SHA-256 mismatch: expected {expected}, got {actual}")
+    _atomic_json(runtime_json, {**info, "sha256": expected})
+    return {"runtime_version": info["runtime_version"], "runtime_pending": True, "runtime_archive": str(archive)}
 
 
 def update_from_github(install_root: Path, progress: ProgressHook | None = None) -> dict[str, Any]:
@@ -487,8 +495,9 @@ def update_from_github(install_root: Path, progress: ProgressHook | None = None)
     version = _validate_version(str(manifest["version"]))
     archive = install_root / "downloads" / f"{version}.zip"
     _download(str(status["asset_url"]), archive, progress, label=f"app {version}")
-    # Runtime first: a new app version must never be activated on a runtime it cannot run on.
-    runtime = ensure_runtime(install_root, manifest, progress)
+    # Runtime first: the new version is only activated once its runtime is verified and staged
+    # (bootstrap.ps1 swaps it in before the next start, outside any running Python).
+    runtime = stage_runtime(install_root, manifest, progress)
     result = install_archive(install_root, manifest, archive)
     result["downloaded"] = str(archive)
     result.update(runtime)

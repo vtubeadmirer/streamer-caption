@@ -161,9 +161,10 @@ class AppController:
                 if result.get("installed") or result.get("current_version") not in (None, app_info.app_version()):
                     self._install = {
                         "state": "done",
-                        "current_version": result.get("current_version"),
+                        "current_version": result.get("installed") or result.get("current_version"),
                         "previous_version": result.get("previous_version"),
-                        "runtime_installed": bool(result.get("runtime_installed")),
+                        "runtime_pending": bool(result.get("runtime_pending")),
+                        "launcher_synced": list(result.get("launcher_synced") or []),
                         "percent": 100,
                     }
                 else:

@@ -155,5 +155,13 @@ marked Latest (the updater reads `/releases/latest`); new requirements mean a ne
 `runtime_version`. The runtime ships NVIDIA cuBLAS (`nvidia-cublas-cu12`) because
 ctranslate2 loads `cublas64_12.dll` by name at the first GPU matmul; the baseline
 engine puts its `bin` folder on `PATH`, so only the NVIDIA driver is required.
-`updater.py update` calls `ensure_runtime()` before activating a new app version,
-so an app release that needs a newer runtime never starts on the old one.
+`updater.py update` calls `stage_runtime()` before activating a new app version:
+on a portable install it downloads and SHA-256-verifies the runtime into
+`downloads/` and rewrites `runtime.json`, but never swaps `runtime/.venv` itself
+(the updater and the app run from it, and Windows cannot rename a directory with
+mapped DLLs). On the relaunch, `launcher.ps1` sees `runtime.json` differ from
+`runtime/.venv/RUNTIME_VERSION` and exits 77; `bootstrap.ps1` then runs
+`Ensure-Runtime` with no Python alive and starts the launcher again. Venv installs
+(no `runtime.json`) ignore the runtime fields. `install_archive` also copies the new
+version's `launcher/*` over `<root>/launcher/`, so launcher fixes reach existing
+installs; the app loads `updater.py` from the running version first.

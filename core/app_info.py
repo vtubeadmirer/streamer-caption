@@ -48,11 +48,11 @@ def is_portable() -> bool:
 
 
 def updater_path() -> Path | None:
+    # The running version's copy first: the root launcher may predate fixes shipped with the app.
     root = install_root()
-    candidates = []
+    candidates = [PROJECT_ROOT / "launcher" / "updater.py"]
     if root is not None:
         candidates.append(root / "launcher" / "updater.py")
-    candidates.append(PROJECT_ROOT / "launcher" / "updater.py")
     for candidate in candidates:
         if candidate.is_file():
             return candidate
