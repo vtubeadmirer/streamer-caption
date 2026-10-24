@@ -13,6 +13,7 @@ class InputDevice:
     name: str
     channels: int
     default_sample_rate: float
+    hostapi: str = ""  # "Windows WASAPI", "MME", ... so UIs can show each physical mic once
 
 
 @dataclass(frozen=True)
@@ -45,17 +46,23 @@ def list_input_devices() -> list[InputDevice]:
     except ImportError as exc:
         raise RuntimeError("sounddevice is not installed. Install requirements first.") from exc
 
+    try:
+        hostapis = [str(api.get("name", "")) for api in sd.query_hostapis()]
+    except Exception:
+        hostapis = []
     devices: list[InputDevice] = []
     for index, device in enumerate(sd.query_devices()):
         channels = int(device.get("max_input_channels", 0))
         if channels <= 0:
             continue
+        api_index = int(device.get("hostapi", -1))
         devices.append(
             InputDevice(
                 index=index,
                 name=str(device.get("name", "")),
                 channels=channels,
                 default_sample_rate=float(device.get("default_samplerate", 0.0)),
+                hostapi=hostapis[api_index] if 0 <= api_index < len(hostapis) else "",
             )
         )
     return devices

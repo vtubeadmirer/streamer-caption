@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.archive_maintenance import recover_unclean_sessions
-from core.config import PROJECT_ROOT, USER_DATA_ROOT, load_config
+from core.config import PROJECT_ROOT, USER_DATA_ROOT, load_config, user_path
 from core.transcript_archive import TranscriptArchive
 from tools.broadcast_validation import write_validation_report
 
@@ -48,7 +48,7 @@ def latest_log_dirs(
     *,
     limit: int = 3,
 ) -> list[Path]:
-    root = Path(log_root or PROJECT_ROOT / "logs")
+    root = Path(log_root) if log_root else user_path(load_config()["log"]["dir"])
     dirs = [path for path in root.glob("*") if path.is_dir()]
     session_dirs = [
         path for path in dirs if (path / "session.jsonl").is_file()
@@ -114,16 +114,20 @@ def make_support_bundle() -> Path:
     if preflight_error is not None:
         include.append(preflight_error)
     include.extend(latest_files("reports/*.json", limit=12))
+    entries = [(path, _bundle_name(path)) for path in include]
+    # Named explicitly: a configured log folder can sit outside both roots.
     for log_dir in log_dirs:
-        include.extend(
-            path for path in log_dir.glob("*") if path.is_file()
+        entries.extend(
+            (path, f"logs/{log_dir.name}/{path.name}")
+            for path in log_dir.glob("*")
+            if path.is_file()
         )
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         seen: set[Path] = set()
-        for path in include:
+        for path, name in entries:
             if path.exists() and path not in seen:
                 seen.add(path)
-                zf.write(path, _bundle_name(path))
+                zf.write(path, name)
     return out
 
 
@@ -420,7 +424,7 @@ def make_issue_bundle(
             add("status.json", json.dumps(scrub_value(status), ensure_ascii=False, indent=2).encode("utf-8"))
         if note.strip():
             add("note.txt", note.strip().encode("utf-8") + b"\n")
-        for log_dir in latest_log_dirs(log_root, limit=2):
+        for log_dir in latest_log_dirs(log_root or user_path(config["log"]["dir"]), limit=2):
             for name, data in _log_folder_entries(log_dir):
                 add(name, data)
         for report in latest_files("reports/final_check_*.json", limit=1):

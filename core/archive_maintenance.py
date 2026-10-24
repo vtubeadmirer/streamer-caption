@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 from core.transcript_archive import TranscriptArchive
 from features.broadcast_report import write_session_report
 
@@ -72,7 +72,7 @@ def recover_unclean_sessions(
 ) -> list[dict[str, Any]]:
     now = _now()
     recovered: list[dict[str, Any]] = []
-    log_root = (PROJECT_ROOT / config.get("log", {}).get("dir", "logs")).resolve()
+    log_root = user_path(config.get("log", {}).get("dir", "logs")).resolve()
     for session in archive.list_open_sessions(limit=1000):
         session_id = str(session["id"])
         if session_id == current_session_id:
@@ -132,12 +132,7 @@ def create_archive_backup(
     archive: TranscriptArchive,
     output_dir: str | Path | None = None,
 ) -> Path:
-    destination_dir = Path(
-        output_dir or PROJECT_ROOT / "reports" / "archive_backups"
-    )
-    if not destination_dir.is_absolute():
-        destination_dir = PROJECT_ROOT / destination_dir
-    destination_dir = destination_dir.resolve()
+    destination_dir = user_path(output_dir or "reports/archive_backups").resolve()
     destination_dir.mkdir(parents=True, exist_ok=True)
     stamp = _now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]
     sqlite_path = destination_dir / f"transcripts_{stamp}.sqlite3"

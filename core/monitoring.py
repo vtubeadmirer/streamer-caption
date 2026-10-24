@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 from core.events import CaptionEvent
 
 
@@ -76,7 +76,7 @@ class MemoryMonitor:
         if session_dir is not None:
             return Path(session_dir) / "memory.csv"
         stamp = time.strftime("%Y-%m-%d_%H%M%S")
-        return PROJECT_ROOT / config["log"]["dir"] / stamp / "memory.csv"
+        return user_path(config["log"]["dir"]) / stamp / "memory.csv"
 
 
 def _format_optional(value: float | None) -> str:

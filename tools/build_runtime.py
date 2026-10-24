@@ -11,9 +11,14 @@ the versions/<ver>/.venv junction):
 
 Usage:
     python tools/build_runtime.py --runtime-version py312-v2 [--dist dist]
+    python tools/build_runtime.py --verify-downloads-only
 
 Produces dist/runtime-<runtime-version>.zip and dist/runtime-manifest.json
 ({runtime_version, asset_name, sha256, size, python_version}).
+
+The two bootstrap downloads are pinned by SHA-256: the embeddable CPython ZIP and the pip wheel
+(pip runs straight from the wheel, replacing the unpinned get-pip.py). A mismatch fails the
+build. --verify-downloads-only fetches and checks just those two files.
 """
 from __future__ import annotations
 
@@ -32,15 +37,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.12.10"  # last 3.12.x with an embeddable build (3.12.11+ are source-only)
 PYTHON_TAG = "".join(PYTHON_VERSION.split(".")[:2])  # "312" as in python312.zip / python312._pth
-EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
-EMBED_SHA256 = ""  # filled from python.org when known; verification is best-effort below
-GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+EMBED_NAME = f"python-{PYTHON_VERSION}-embed-amd64.zip"
+EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{EMBED_NAME}"
+# SHA-256 of https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip (11133606 bytes),
+# recorded 2026-10-24. Its MD5 fe8ef205f2e9c3ba44d0cf9954e1abd3 and size match python.org's release
+# API (/api/v2/downloads/release_file/?release=1007), and its files are byte-identical to the ones in
+# the published runtime-py312-v2 (built by CI from its own download).
+EMBED_SHA256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+# pip from a pinned wheel instead of https://bootstrap.pypa.io/get-pip.py (unpinned code run in CI).
+# URL and SHA-256 from https://pypi.org/pypi/pip/26.2.2/json (the py3-none-any wheel). A wheel is a
+# zip, so with the wheel on sys.path pip runs straight from it (zipimport), as get-pip.py does.
+PIP_VERSION = "26.2.2"
+PIP_WHEEL_NAME = f"pip-{PIP_VERSION}-py3-none-any.whl"  # pip only installs a wheel under its own name
+PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl"
+PIP_WHEEL_SHA256 = "fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
 PRUNE_DIRS = {"__pycache__"}  # never prune package "tests"/"testing" dirs: torch imports torch.testing at runtime
 # Never imported at runtime (torch C++ headers for building extensions, onnxruntime's offline
 # ORT-format model converters) and home of the deepest paths in the ZIP.
 PRUNE_TREES = ("torch/include", "onnxruntime/tools")
-# The launcher extracts to <root>\runtime\.staging-<32 hex>\<entry>; entries up to 120 characters
-# keep that under MAX_PATH (260) for install roots up to ~88 characters without long-path support.
+# bootstrap.ps1 extracts to <root>\runtime\.staging-<8 hex>\<entry>; entries up to 120 characters
+# keep that under MAX_PATH (260) for install roots up to ~112 characters without long-path support.
 MAX_ENTRY_PATH = 120
 # ctranslate2 loads cuBLAS by name at the first GPU matmul, so a runtime without it passes every
 # import check and only fails on a PC that has no CUDA Toolkit. ctranslate2 4.8 never calls cuDNN.
@@ -77,6 +93,69 @@ def download(url: str, target: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "streamer-caption-runtime-build"})
     with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as handle:
         shutil.copyfileobj(response, handle, length=1024 * 1024)
+
+
+def download_verified(url: str, target: Path, expected_sha256: str) -> Path:
+    """Download `url` and fail the build unless the file has the pinned SHA-256."""
+    if len(expected_sha256) != 64:
+        raise SystemExit(f"no pinned SHA-256 for {url}")
+    print(f"downloading {url}")
+    download(url, target)
+    actual = sha256_of(target)
+    if actual != expected_sha256:
+        target.unlink(missing_ok=True)
+        raise SystemExit(f"SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual}")
+    print(f"  sha256 ok {actual}")
+    return target
+
+
+def fetch_pinned_inputs(work: Path) -> tuple[Path, Path]:
+    """The embeddable CPython ZIP and the pip wheel, both verified."""
+    embed_zip = download_verified(EMBED_URL, work / EMBED_NAME, EMBED_SHA256)
+    pip_wheel = download_verified(PIP_WHEEL_URL, work / PIP_WHEEL_NAME, PIP_WHEEL_SHA256)
+    return embed_zip, pip_wheel
+
+
+def unpack_python(embed_zip: Path, scripts: Path) -> Path:
+    """Extract the embeddable CPython into Scripts/ and point its ._pth at ../Lib/site-packages."""
+    scripts.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(embed_zip) as archive:
+        archive.extractall(scripts)
+    pth = scripts / f"python{PYTHON_TAG}._pth"
+    if not pth.is_file() or not (scripts / f"python{PYTHON_TAG}.zip").is_file():
+        raise SystemExit(f"embeddable Python {PYTHON_VERSION} has no python{PYTHON_TAG}._pth / python{PYTHON_TAG}.zip")
+    pth.write_text(f"python{PYTHON_TAG}.zip\n.\n..\\Lib\\site-packages\nimport site\n", encoding="utf-8")
+    return scripts / "python.exe"
+
+
+# Runs pip's main() with the wheel on sys.path, as get-pip.py does. Not `python <wheel>/pip`: with
+# argv[0] named "pip", pip on Windows refuses to install pip itself ("To modify pip, please run ...").
+PIP_BOOTSTRAP = "import sys; sys.path.insert(0, sys.argv.pop(1)); from pip._internal.cli.main import main; sys.exit(main())"
+
+
+def pip_from_wheel(python: Path, pip_wheel: Path) -> list[str]:
+    return [str(python), "-c", PIP_BOOTSTRAP, str(pip_wheel)]
+
+
+def verify_downloads() -> dict:
+    """--verify-downloads-only: fetch and hash-check the pinned inputs and, on Windows, check that
+    pip runs from the wheel under the embedded interpreter. Nothing is built or kept."""
+    work = Path(tempfile.mkdtemp(prefix="sc-runtime-verify-"))
+    try:
+        embed_zip, pip_wheel = fetch_pinned_inputs(work)
+        result: dict = {
+            "python": {"url": EMBED_URL, "sha256": EMBED_SHA256, "size": embed_zip.stat().st_size},
+            "pip": {"url": PIP_WHEEL_URL, "sha256": PIP_WHEEL_SHA256, "size": pip_wheel.stat().st_size},
+        }
+        if sys.platform == "win32":
+            python = unpack_python(embed_zip, work / ".venv" / "Scripts")
+            check = subprocess.run(pip_from_wheel(python, pip_wheel) + ["--version"], capture_output=True, text=True, cwd=str(work))
+            if check.returncode != 0 or f"pip {PIP_VERSION} " not in check.stdout:
+                raise SystemExit(f"pip {PIP_VERSION} did not run from the wheel:\n{check.stdout}\n{check.stderr}")
+            result["pip_runs_from_wheel"] = check.stdout.split(" from ")[0].strip()
+        return result
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def run(args: list[str], cwd: Path | None = None) -> None:
@@ -137,21 +216,12 @@ def build(runtime_version: str, dist: Path, requirements: Path, keep_build: bool
         scripts.mkdir(parents=True)
         site_packages.mkdir(parents=True)
 
-        embed_zip = work / "python-embed.zip"
-        print(f"downloading {EMBED_URL}")
-        download(EMBED_URL, embed_zip)
-        with zipfile.ZipFile(embed_zip) as archive:
-            archive.extractall(scripts)
-        pth = scripts / f"python{PYTHON_TAG}._pth"
-        if not pth.is_file() or not (scripts / f"python{PYTHON_TAG}.zip").is_file():
-            raise SystemExit(f"embeddable Python {PYTHON_VERSION} has no python{PYTHON_TAG}._pth / python{PYTHON_TAG}.zip")
-        pth.write_text(f"python{PYTHON_TAG}.zip\n.\n..\\Lib\\site-packages\nimport site\n", encoding="utf-8")
-
-        get_pip = work / "get-pip.py"
-        download(GET_PIP_URL, get_pip)
-        python = scripts / "python.exe"
-        run([str(python), str(get_pip), "--no-warn-script-location", "--target", str(site_packages)])
-        run([str(python), "-m", "pip", "install", "--no-warn-script-location", "--target", str(site_packages), "-r", str(requirements)])
+        downloads = work / "downloads"  # outside .venv, so nothing of it lands in the ZIP
+        embed_zip, pip_wheel = fetch_pinned_inputs(downloads)
+        python = unpack_python(embed_zip, scripts)
+        # pip runs from the verified wheel and also installs itself from it, so the runtime keeps
+        # `python -m pip` (install_update_dependencies.bat, setup_simulstreaming_experiment.bat).
+        run(pip_from_wheel(python, pip_wheel) + ["install", "--no-warn-script-location", "--target", str(site_packages), str(pip_wheel), "-r", str(requirements)])
 
         removed = prune(site_packages)
         folded = fold_licenses(site_packages)
@@ -200,7 +270,12 @@ def main() -> int:
     parser.add_argument("--dist", default=str(ROOT / "dist"))
     parser.add_argument("--requirements", default=str(ROOT / "requirements.txt"))
     parser.add_argument("--keep-build", action="store_true")
+    parser.add_argument("--verify-downloads-only", action="store_true",
+                        help="download the pinned Python ZIP and pip wheel, check their SHA-256 and exit without building")
     args = parser.parse_args()
+    if args.verify_downloads_only:
+        print(json.dumps({"ok": True, **verify_downloads()}, indent=2))
+        return 0
     manifest = build(args.runtime_version, Path(args.dist), Path(args.requirements), keep_build=args.keep_build)
     print(json.dumps({"ok": True, **manifest}, indent=2))
     return 0

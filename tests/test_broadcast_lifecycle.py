@@ -102,6 +102,18 @@ def main() -> int:
         assert session["ended_at"]
         assert session["caption_count"] == 1
 
+        # A relaunch (settings change / update restart) is not the end of the broadcast:
+        # no report, no forced recap, and overlays get session_paused instead of broadcast_ended.
+        delivered.clear()
+        paused_writer = JsonlLogWriter(str(temp / "logs"))
+        paused = SessionArchiveRecorder(config, paused_writer, source="microphone", engine="test", mode="v2_light", analysis_sink=receive)
+        paused.record_event(CaptionEvent(event_type="caption_confirmed", text="before restart", confidence=0.9, audio_offset_sec=3.0, engine="test"))
+        assert paused.close({"pipeline_exit_code": 76}, relaunch=True) == {}
+        assert [event.event_type for event in delivered] == ["session_paused"], [e.event_type for e in delivered]
+        assert delivered[0].metadata["close_metadata"]["relaunch"] is True
+        assert not list(paused_writer.session_dir.glob("broadcast_report.*")), "no report on relaunch"
+        assert paused.store.get_session(paused.session_id)["ended_at"], "the archive session is still closed cleanly"
+
     summary_html = (ROOT / "overlay" / "summary.html").read_text(
         encoding="utf-8"
     )

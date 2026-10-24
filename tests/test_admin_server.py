@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 import sys
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.admin_server import AdminServer, AdminState
-from core.config import load_config
+from core.config import CONFIG_PATH, DEFAULTS, USER_DATA_ROOT, load_config, user_path
+
+RESET_CHILD = "--reset-child"
 
 
 def read_json(url: str) -> dict:
@@ -24,7 +29,50 @@ def read_text(url: str) -> str:
         return response.read().decode("utf-8")
 
 
+def check_reset_keeps_user_data() -> None:
+    """Runs in a child whose user-data folder is a temp dir, so the reset rewrites that config."""
+    from features.defense import DefenseFilter
+
+    data = USER_DATA_ROOT / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "blocklist.txt").write_text("blocked-term\n", encoding="utf-8")
+    custom_slang = str(USER_DATA_ROOT / "elsewhere" / "slang.json")
+    CONFIG_PATH.write_text(json.dumps({
+        "config_schema": 2,  # an older setup's absolute user-data paths
+        "archive": {"db_path": str(data / "transcripts.sqlite3")},
+        "defense": {"blocklist_path": str(data / "blocklist.txt")},
+        "slang": {"dict_path": custom_slang},
+        "audio": {"source": "both", "device": 7, "system_device": "Speakers"},
+        "whisper": {"beam_size": 2},
+    }), encoding="utf-8")
+    config = load_config()
+    config["server"]["admin_port"] = 0
+    server = AdminServer(config, AdminState())
+    server.start_background()
+    port = int(server._httpd.server_address[1])
+    try:
+        request = Request(f"http://127.0.0.1:{port}/api/reset", data=b"{}", method="POST")
+        with urlopen(request, timeout=5.0) as response:
+            returned = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.stop()
+    stored = load_config()
+    for reset in (returned, stored):
+        assert reset["whisper"]["beam_size"] == DEFAULTS["whisper"]["beam_size"], "tuning is reset"
+        assert (reset["audio"]["source"], reset["audio"]["device"], reset["audio"]["system_device"]) == (
+            "both", 7, "Speakers"), reset["audio"]
+        db_path = user_path(reset["archive"]["db_path"]).resolve()
+        assert db_path == data / "transcripts.sqlite3", f"reset moved the transcript archive to {db_path}"
+        assert reset["slang"]["dict_path"] == custom_slang, "a custom location survives the reset"
+    assert stored["archive"]["db_path"] == "data/transcripts.sqlite3", stored["archive"]
+    assert DefenseFilter(stored).blocklist == ["blocked-term"], "the blocklist must keep applying after a reset"
+
+
 def main() -> int:
+    if RESET_CHILD in sys.argv:
+        check_reset_keeps_user_data()
+        print("admin_reset_ok")
+        return 0
     config = copy.deepcopy(load_config())
     config["server"]["admin_port"] = 9877
     state = AdminState()
@@ -49,6 +97,19 @@ def main() -> int:
     assert "justChattingMode" in caption_html
     assert "themeLight" in admin_html and "themeDark" in admin_html
     assert 'body[data-theme="dark"]' in theme_css
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+        user_data = Path(directory) / "user-data"  # the folder name the launchers use
+        user_data.mkdir()
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), RESET_CHILD],
+            env={**os.environ, "STREAMER_CAPTION_USER_DATA": str(user_data)},
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=120,
+        )
+    assert result.returncode == 0 and "admin_reset_ok" in result.stdout, result.stdout + result.stderr
     print("admin_server_ok")
     return 0
 

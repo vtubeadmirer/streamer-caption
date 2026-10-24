@@ -6,14 +6,14 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 from core.events import CaptionEvent
 
 
 class JsonlLogWriter:
     def __init__(self, log_dir: str = "logs") -> None:
         stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]
-        self.session_dir = PROJECT_ROOT / log_dir / stamp
+        self.session_dir = user_path(log_dir) / stamp
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.session_dir / "session.jsonl"
         self.caption_path = self.session_dir / "captions.txt"

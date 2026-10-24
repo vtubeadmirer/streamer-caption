@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 
 
 @dataclass(frozen=True)
@@ -72,9 +72,9 @@ class DefenseFilter:
         )
         self.repeat_limit = int(defense.get("repeat_limit", 2))
         self._recent_visible: deque[tuple[float, str]] = deque()
-        self.blocklist = _load_terms(PROJECT_ROOT / defense["blocklist_path"])
+        self.blocklist = _load_terms(user_path(defense["blocklist_path"]))
         self.whitelist = set(
-            _load_terms(PROJECT_ROOT / defense["whitelist_path"])
+            _load_terms(user_path(defense["whitelist_path"]))
         )
 
     def apply(

@@ -16,7 +16,16 @@ from core.app_control import AppController
 from core.audio_capture import list_input_devices
 from core.audio_sources import list_system_audio_devices
 from core.archive_maintenance import create_archive_backup, prune_archive
-from core.config import CONFIG_LIFETIME, DEFAULTS, PROJECT_ROOT, deep_merge, load_config, save_config
+from core.config import (
+    CONFIG_LIFETIME,
+    DEFAULTS,
+    PROJECT_ROOT,
+    USER_DATA_PATH_KEYS,
+    deep_merge,
+    load_config,
+    save_config,
+    user_path,
+)
 from core.profiles import apply_profile, list_profiles
 from core.transcript_archive import TranscriptArchive
 from features.broadcast_report import build_session_report
@@ -247,20 +256,25 @@ class AdminServer:
                     return
                 if path == "/api/reset":
                     current = load_config()
-                    reset = deep_merge(
-                        DEFAULTS,
-                        {
-                            "audio": {
-                                "source": current["audio"].get(
-                                    "source", "microphone"
-                                ),
-                                "device": current["audio"]["device"],
-                                "system_device": current["audio"].get(
-                                    "system_device", ""
-                                ),
-                            }
-                        },
-                    )
+                    kept: dict[str, dict[str, Any]] = {
+                        "audio": {
+                            "source": current["audio"].get(
+                                "source", "microphone"
+                            ),
+                            "device": current["audio"]["device"],
+                            "system_device": current["audio"].get(
+                                "system_device", ""
+                            ),
+                        }
+                    }
+                    # Reset restores tuning; it must not switch the app to another
+                    # transcript archive, word list or log folder. A blank or broken
+                    # value still falls back to the default.
+                    for section, key in USER_DATA_PATH_KEYS:
+                        value = current.get(section, {}).get(key)
+                        if isinstance(value, str) and value.strip():
+                            kept.setdefault(section, {})[key] = value
+                    reset = deep_merge(DEFAULTS, kept)
                     save_config(reset)
                     with analysis_cache_lock:
                         archive_config.clear()
@@ -900,8 +914,8 @@ class AdminServer:
 
             def _read_slang_files(self) -> dict[str, Any]:
                 config = load_config()
-                slang_path = PROJECT_ROOT / config["slang"]["dict_path"]
-                whitelist_path = PROJECT_ROOT / config["defense"]["whitelist_path"]
+                slang_path = user_path(config["slang"]["dict_path"])
+                whitelist_path = user_path(config["defense"]["whitelist_path"])
                 slang = {}
                 if slang_path.exists():
                     slang = json.loads(slang_path.read_text(encoding="utf-8") or "{}")
@@ -917,8 +931,8 @@ class AdminServer:
             def _write_slang_files(self, payload: dict[str, Any]) -> None:
                 previous_slang = dict(self._read_slang_files().get("slang", {}))
                 config = load_config()
-                slang_path = PROJECT_ROOT / config["slang"]["dict_path"]
-                whitelist_path = PROJECT_ROOT / config["defense"]["whitelist_path"]
+                slang_path = user_path(config["slang"]["dict_path"])
+                whitelist_path = user_path(config["defense"]["whitelist_path"])
                 slang = payload.get("slang", {})
                 whitelist = payload.get("whitelist", [])
                 if not isinstance(slang, dict):

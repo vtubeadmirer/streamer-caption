@@ -6,8 +6,10 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -50,14 +52,23 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _version_key(value: str) -> tuple[tuple[int, ...], int, str]:
+PrereleaseKey = tuple[tuple[int, Any], ...]
+
+
+def _prerelease_key(suffix: str) -> PrereleaseKey:
+    """Dot-separated parts; numeric parts compare as numbers (dev.9 < dev.10) and sort before
+    words (alpha.1 < alpha.beta); a shorter prefix sorts first (rc < rc.1), as in SemVer."""
+    return tuple((0, int(part)) if part.isdigit() else (1, part) for part in suffix.split("."))
+
+
+def _version_key(value: str) -> tuple[tuple[int, ...], int, PrereleaseKey]:
     cleaned = value.strip().lower().lstrip("v")
     match = re.fullmatch(r"(\d+(?:\.\d+)*)(?:[-+]([0-9a-z.-]+))?", cleaned)
     if not match:
-        return ((0,), 0, cleaned)
+        return ((0,), 0, ((1, cleaned),))
     numbers = tuple(int(part) for part in match.group(1).split("."))
     suffix = match.group(2) or ""
-    return (numbers, 1 if not suffix else 0, suffix)
+    return (numbers, 1 if not suffix else 0, _prerelease_key(suffix) if suffix else ())
 
 
 def _validate_version(value: str) -> str:
@@ -359,7 +370,23 @@ def _validate_manifest(manifest: dict[str, Any]) -> tuple[str, str]:
     return version, expected
 
 
-def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path) -> dict[str, Any]:
+def _fresh_dir(parent: Path, prefix: str) -> Path:
+    """<parent>/<prefix><8 hex>. Short on purpose: without long-path support Windows stops at
+    260 characters, and the staging folder name is part of every extracted path."""
+    for _ in range(16):
+        candidate = parent / f"{prefix}{uuid.uuid4().hex[:8]}"
+        if not candidate.exists():
+            return candidate
+    raise UpdateError(f"no free folder name for {prefix}* in {parent}")
+
+
+def install_archive(
+    install_root: Path,
+    manifest: dict[str, Any],
+    archive: Path,
+    *,
+    running_version: str | None = None,
+) -> dict[str, Any]:
     install_root = install_root.resolve()
     version, expected = _validate_manifest(manifest)
     actual = _sha256(archive)
@@ -373,7 +400,7 @@ def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path)
         if not (target / "VERSION").exists():
             raise UpdateError(f"existing version directory is incomplete: {target}")
     else:
-        staging = versions / f".{version}.staging-{uuid.uuid4().hex}"
+        staging = _fresh_dir(versions, ".staging-")
         try:
             _safe_extract(archive, staging)
             payload = staging
@@ -404,7 +431,17 @@ def install_archive(install_root: Path, manifest: dict[str, Any], archive: Path)
     state["last_update_status"] = "installed"
     _atomic_json(install_root / "state.json", state)
     synced = sync_launcher(install_root, target)
-    return {"installed": version, "previous_version": state.get("previous_version"), "path": str(target), "launcher_synced": synced}
+    try:
+        pruned = prune_install(install_root, keep_archive=archive, running_version=running_version)
+    except Exception as exc:  # housekeeping must never fail an install that already succeeded
+        pruned = {"versions": [], "downloads": [], "staging": [], "errors": [f"{type(exc).__name__}: {exc}"]}
+    return {
+        "installed": version,
+        "previous_version": state.get("previous_version"),
+        "path": str(target),
+        "launcher_synced": synced,
+        "pruned": pruned,
+    }
 
 
 RUNTIME_MARKER = "RUNTIME_VERSION"
@@ -433,13 +470,27 @@ def runtime_info_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | Non
     }
 
 
-LAUNCHER_FILES = ("bootstrap.ps1", "launcher.ps1", "updater.py", "StreamerCaption.bat")
+LAUNCHER_FILES = ("bootstrap.ps1", "launcher.ps1", "updater.py")
+# The portable one-button entry lives at the install ROOT (<root>/StreamerCaption.bat calls
+# launcher\bootstrap.ps1 next to it). It is refreshed only where it already exists: INSTALL.bat
+# installs start from START_STREAMER_CAPTION.bat and never had one.
+ROOT_LAUNCHER_FILES = ("StreamerCaption.bat",)
+
+
+def _replace_file(source: Path, target: Path) -> bool:
+    if target.exists() and target.read_bytes() == source.read_bytes():
+        return False
+    temporary = target.with_suffix(target.suffix + ".new")
+    shutil.copyfile(source, temporary)
+    os.replace(temporary, target)
+    return True
 
 
 def sync_launcher(install_root: Path, version_root: Path) -> list[str]:
-    """Copy the freshly installed version's launcher files over <root>/launcher so fixes to the
-    bootstrap/launcher/updater reach existing installs. PowerShell reads a script fully before
-    running it, so replacing the file under a running launcher is safe; it takes effect next start."""
+    """Copy the freshly installed version's launcher files over <root>/launcher (and the root
+    StreamerCaption.bat) so fixes to the bootstrap/launcher/updater reach existing installs.
+    PowerShell reads a script fully before running it, so replacing the file under a running
+    launcher is safe; it takes effect next start."""
     source_dir = version_root / "launcher"
     target_dir = install_root / "launcher"
     if not source_dir.is_dir() or not target_dir.is_dir():
@@ -447,16 +498,231 @@ def sync_launcher(install_root: Path, version_root: Path) -> list[str]:
     synced: list[str] = []
     for name in LAUNCHER_FILES:
         source = source_dir / name
-        if not source.is_file():
-            continue
-        target = target_dir / name
-        if target.exists() and target.read_bytes() == source.read_bytes():
-            continue
-        temporary = target.with_suffix(target.suffix + ".new")
-        shutil.copyfile(source, temporary)
-        os.replace(temporary, target)
-        synced.append(name)
+        if source.is_file() and _replace_file(source, target_dir / name):
+            synced.append(name)
+    for name in ROOT_LAUNCHER_FILES:
+        source = source_dir / name
+        if source.is_file() and (install_root / name).is_file() and _replace_file(source, install_root / name):
+            synced.append(name)
+        # 1.1.3 copied it into launcher/, where its %~dp0launcher\ paths point nowhere. An install
+        # root never holds main.py; a source checkout (where launcher/ is the original) does.
+        stray = target_dir / name
+        if stray.is_file() and not (install_root / "main.py").exists():
+            try:
+                stray.unlink()
+            except OSError:
+                pass
     return synced
+
+
+DEFAULT_KEEP_VERSIONS = 2
+STALE_FOLDER_SEC = 60 * 60  # staging folders younger than this may belong to an install in progress
+_VERSION_DIR = re.compile(r"\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?")
+
+
+def _keep_versions(config: dict[str, Any]) -> int:
+    try:
+        value = int(config.get("keep_versions") or DEFAULT_KEEP_VERSIONS)
+    except (TypeError, ValueError):
+        return DEFAULT_KEEP_VERSIONS
+    return min(max(value, 1), 100)
+
+
+def _running_version(install_root: Path) -> str | None:
+    """The version whose copy of this module is running (<root>/versions/<v>/launcher/updater.py):
+    that is the app installing the update, so its folder is in use. None for the root launcher."""
+    try:
+        version_dir = Path(__file__).resolve().parent.parent
+        if version_dir.parent.name == "versions" and version_dir.parent.parent == install_root.resolve():
+            return version_dir.name
+    except (OSError, NameError):
+        pass
+    return None
+
+
+def _is_link(path: Path) -> bool:
+    """Symlink or NTFS junction. The launcher links versions/<v>/.venv to the shared runtime and
+    logs/reports/samples to user-data: deleting a version must drop the link, never its target."""
+    try:
+        if path.is_symlink():
+            return True
+        isjunction = getattr(os.path, "isjunction", None)  # Python 3.12+
+        if isjunction is not None and isjunction(path):
+            return True
+        return bool(getattr(os.lstat(path), "st_file_attributes", 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+    except OSError:
+        return False
+
+
+def _unlink_link(path: Path) -> None:
+    try:
+        os.unlink(path)  # on Windows this removes a junction or directory symlink itself
+    except OSError:
+        os.rmdir(path)
+
+
+def _long_path(path: Path) -> str:
+    """Extended-length path on Windows, so trees deeper than 260 characters can still be deleted."""
+    text = os.path.abspath(str(path))  # abspath, not resolve(): resolve() would follow a junction
+    if sys.platform != "win32" or text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
+def _remove_tree(path: Path) -> None:
+    """Delete a folder; links inside it are removed as links (shutil.rmtree does not follow them
+    either, but the junctions into runtime/ and user-data/ are unlinked first regardless)."""
+    if _is_link(path):
+        _unlink_link(path)
+        return
+    with os.scandir(path) as entries:
+        links = [Path(entry.path) for entry in entries if _is_link(Path(entry.path))]
+    for link in links:
+        _unlink_link(link)
+
+    def make_writable_and_retry(function: Callable[..., Any], target: str, *_: Any) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(_long_path(path), onexc=make_writable_and_retry)
+    else:  # pragma: no cover - the runtime is Python 3.12
+        shutil.rmtree(_long_path(path), onerror=make_writable_and_retry)
+
+
+# Never shipped in a release ZIP (tools/build_public_release.py excludes them). Finding one in a
+# version folder means the app ran from there without the launcher's user-data folder (a .bat
+# started inside versions/<v>), so that folder holds the streamer's data and is never deleted.
+USER_DATA_FILES = ("config.json", "data/slang_dict.json", "data/whitelist.txt", "data/blocklist.txt")
+USER_DATA_SUFFIXES = (".sqlite3", ".wav", ".mp3", ".flac")
+USER_DATA_DIRS = ("logs", "reports", "samples")  # junctions into user-data/ when started by the launcher
+
+
+def _user_data_in(version_dir: Path) -> str | None:
+    for relative in USER_DATA_FILES:
+        if (version_dir / relative).is_file():
+            return relative
+    data = version_dir / "data"
+    if data.is_dir() and not _is_link(data):
+        for item in data.iterdir():
+            if item.suffix.lower() in USER_DATA_SUFFIXES:
+                return f"data/{item.name}"
+    for name in USER_DATA_DIRS:
+        folder = version_dir / name
+        if folder.is_dir() and not _is_link(folder) and any(folder.iterdir()):
+            return f"{name}/"
+    return None
+
+
+def _pending_runtime_asset(install_root: Path) -> str | None | bool:
+    """The runtime ZIP bootstrap.ps1 still has to install (runtime.json differs from the installed
+    marker), None when nothing is pending, False when runtime.json cannot be read."""
+    path = install_root / "runtime.json"
+    if not path.exists():
+        return None
+    try:
+        info = _read_json(path)
+    except (OSError, ValueError, UpdateError):
+        return False
+    wanted = str(info.get("runtime_version") or "").strip()
+    if not wanted or wanted == current_runtime_version(install_root):
+        return None
+    return str(info.get("asset_name") or f"runtime-{wanted}.zip")
+
+
+def prune_install(
+    install_root: Path,
+    *,
+    keep_archive: Path | None = None,
+    running_version: str | None = None,
+) -> dict[str, list[str]]:
+    """Housekeeping after an install (best effort, never raises for a single item):
+    - versions/: keep at most `keep_versions` (updater.json, default 2) folders, deleting the
+      oldest first, but never current_version, previous_version (rollback), the running one or
+      one holding user data (see USER_DATA_FILES); a folder is renamed before deletion, so one
+      still in use by any process is skipped whole;
+    - downloads/: delete *.zip and *.partial except `keep_archive` (the app ZIP just installed)
+      and the runtime ZIP named in runtime.json while bootstrap.ps1 still has to install it;
+    - delete versions/.staging-*, versions/.trash-*, runtime/.staging-* and runtime/.old-* folders
+      older than STALE_FOLDER_SEC, left behind by interrupted installs."""
+    install_root = install_root.resolve()
+    report: dict[str, list[str]] = {"versions": [], "downloads": [], "staging": [], "errors": []}
+    state = load_state(install_root)
+    try:
+        config = load_updater_config(install_root)
+    except (OSError, ValueError, UpdateError):
+        config = {}
+    keep = _keep_versions(config)
+    protected = {
+        str(value)
+        for value in (state.get("current_version"), state.get("previous_version"), running_version or _running_version(install_root))
+        if value
+    }
+
+    versions_dir = install_root / "versions"
+    if versions_dir.is_dir():
+        installed = sorted(
+            (item for item in versions_dir.iterdir() if _VERSION_DIR.fullmatch(item.name) and item.is_dir()),
+            key=lambda item: _version_key(item.name),
+        )
+        excess = len(installed) - keep
+        for item in installed:  # oldest first
+            if excess <= 0:
+                break
+            if item.name in protected:
+                continue
+            try:
+                user_data = _user_data_in(item)
+                if user_data:
+                    report["errors"].append(f"versions/{item.name}: kept, it holds user data ({user_data})")
+                    continue
+                trash = _fresh_dir(versions_dir, ".trash-")
+                os.replace(item, trash)  # fails while a process runs from it or holds a file open in it
+            except (OSError, UpdateError) as exc:
+                report["errors"].append(f"versions/{item.name}: {type(exc).__name__}: {exc}")
+                continue
+            excess -= 1
+            report["versions"].append(item.name)
+            try:
+                _remove_tree(trash)
+            except OSError as exc:  # swept on a later run (it is no longer a version folder)
+                report["errors"].append(f"versions/{trash.name}: {type(exc).__name__}: {exc}")
+
+    downloads = install_root / "downloads"
+    pending = _pending_runtime_asset(install_root)
+    if downloads.is_dir() and pending is not False:
+        keep_names = {pending} if pending else set()
+        kept_archive = keep_archive.resolve() if keep_archive is not None else None
+        for item in downloads.iterdir():
+            name = item.name.lower()
+            if not item.is_file() or item.name in keep_names or (kept_archive is not None and item.resolve() == kept_archive):
+                continue
+            if name.endswith(".zip") or name.endswith(".partial"):
+                try:
+                    item.unlink()
+                    report["downloads"].append(item.name)
+                except OSError as exc:
+                    report["errors"].append(f"downloads/{item.name}: {type(exc).__name__}: {exc}")
+
+    cutoff = time.time() - STALE_FOLDER_SEC
+    for parent, prefixes in ((versions_dir, (".staging-", ".trash-")), (install_root / "runtime", (".staging-", ".old-"))):
+        if not parent.is_dir():
+            continue
+        for item in parent.iterdir():
+            # 1.1.x named version staging folders versions/.<version>.staging-<32 hex>
+            legacy = parent == versions_dir and item.name.startswith(".") and ".staging-" in item.name
+            if not (item.name.startswith(prefixes) or legacy):
+                continue
+            try:
+                if item.lstat().st_mtime > cutoff:
+                    continue
+                _remove_tree(item)
+                report["staging"].append(f"{parent.name}/{item.name}")
+            except OSError as exc:
+                report["errors"].append(f"{parent.name}/{item.name}: {type(exc).__name__}: {exc}")
+    return report
 
 
 def stage_runtime(install_root: Path, manifest: dict[str, Any], progress: ProgressHook | None = None) -> dict[str, Any]:
@@ -487,7 +753,12 @@ def stage_runtime(install_root: Path, manifest: dict[str, Any], progress: Progre
     return {"runtime_version": info["runtime_version"], "runtime_pending": True, "runtime_archive": str(archive)}
 
 
-def update_from_github(install_root: Path, progress: ProgressHook | None = None) -> dict[str, Any]:
+def update_from_github(
+    install_root: Path,
+    progress: ProgressHook | None = None,
+    *,
+    running_version: str | None = None,
+) -> dict[str, Any]:
     status = check_for_update(install_root, force=True)
     if not status.get("available"):
         return status
@@ -498,7 +769,7 @@ def update_from_github(install_root: Path, progress: ProgressHook | None = None)
     # Runtime first: the new version is only activated once its runtime is verified and staged
     # (bootstrap.ps1 swaps it in before the next start, outside any running Python).
     runtime = stage_runtime(install_root, manifest, progress)
-    result = install_archive(install_root, manifest, archive)
+    result = install_archive(install_root, manifest, archive, running_version=running_version)
     result["downloaded"] = str(archive)
     result.update(runtime)
     return result

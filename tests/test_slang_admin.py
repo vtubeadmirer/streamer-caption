@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.admin_server import AdminServer, AdminState
-from core.config import PROJECT_ROOT, load_config
+from core.config import load_config, user_path
 from engines.baseline.engine import BaselineEngine
 from features.defense import DefenseFilter
 from features.slang import SlangDictionary
@@ -36,8 +36,8 @@ def post_json(url: str, payload: dict) -> dict:
 def main() -> int:
     config = copy.deepcopy(load_config())
     config["server"]["admin_port"] = 9878
-    slang_path = PROJECT_ROOT / config["slang"]["dict_path"]
-    whitelist_path = PROJECT_ROOT / config["defense"]["whitelist_path"]
+    slang_path = user_path(config["slang"]["dict_path"])
+    whitelist_path = user_path(config["defense"]["whitelist_path"])
     old_slang = slang_path.read_text(encoding="utf-8") if slang_path.exists() else None
     old_whitelist = whitelist_path.read_text(encoding="utf-8") if whitelist_path.exists() else None
     try:

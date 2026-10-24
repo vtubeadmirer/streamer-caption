@@ -57,8 +57,8 @@ def main() -> int:
         bootstrap_user_data(user_data)
         assert json.loads(slang.read_text(encoding="utf-8"))["custom"] == "protected"
         config = json.loads((user_data / "config.json").read_text(encoding="utf-8"))
-        assert Path(config["archive"]["db_path"]).is_absolute()
-        assert str(user_data.resolve()) in config["archive"]["db_path"]
+        assert config["archive"]["db_path"] == "data/transcripts.sqlite3", "relative: resolved under user-data"
+        assert config["log"]["dir"] == "logs", config["log"]
 
         dist = base / "dist"
         built = build_public_release(ROOT, dist)

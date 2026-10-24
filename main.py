@@ -286,7 +286,8 @@ def run_live(
             "hidden": admin_state.hidden_caption_count,
             "discarded": admin_state.discarded_segment_count,
             "exit_code": baseline_exit_code,
-        }
+        },
+        relaunch=baseline_exit_code == RELAUNCH_EXIT_CODE,
     )
     if report_paths:
         print(f"session report: {report_paths['markdown']}")
@@ -1273,7 +1274,8 @@ def run_v2_light(
             "discarded": admin_state.discarded_segment_count,
             "pipeline_exit_code": pipeline_exit_code,
             "stopped_by_user": stopped_by_user,
-        }
+        },
+        relaunch=pipeline_exit_code == RELAUNCH_EXIT_CODE,
     )
     if report_paths:
         print(f"session report: {report_paths['markdown']}")

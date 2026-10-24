@@ -22,7 +22,21 @@ USER_DATA_ROOT = _user_data_root()
 CONFIG_PATH = USER_DATA_ROOT / "config.json"
 
 
-CONFIG_SCHEMA = 2  # 2: Silero VAD became the default; stored "energy" from schema 1 is migrated
+def user_path(value: str | Path, *, root: Path | None = None) -> Path:
+    """Where a configured user-data path (log.dir, archive.db_path, ...) is on disk.
+
+    Relative values belong to the user-data folder, not to the code folder: an installed
+    copy runs from versions/<ver>/, which the next update replaces.
+    """
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (USER_DATA_ROOT if root is None else root) / path
+
+
+# 2: Silero VAD became the default; stored "energy" from schema 1 is migrated.
+# 3: user-data paths are stored relative (see user_path); setup's absolute ones are rewritten.
+CONFIG_SCHEMA = 3
 
 DEFAULTS: dict[str, Any] = {
     "config_schema": CONFIG_SCHEMA,
@@ -339,47 +353,23 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return result
 
 
-# Files that first-run setup (tools/bootstrap_user_data.py) places under user-data with
-# absolute paths. When the whole install folder is moved (e.g. out of OneDrive), those
-# paths still point at the old place; load_config re-anchors them to the current root.
-USER_DATA_FILES: dict[tuple[str, str], str] = {
-    ("defense", "blocklist_path"): "data/blocklist.txt",
-    ("defense", "whitelist_path"): "data/whitelist.txt",
-    ("slang", "dict_path"): "data/slang_dict.json",
-    ("archive", "db_path"): "data/transcripts.sqlite3",
-    ("log", "dir"): "logs",
-}
-
-
-def _anchor_user_data_paths(config: dict[str, Any], user_data_root: Path = USER_DATA_ROOT) -> dict[str, Any]:
-    if user_data_root == PROJECT_ROOT:
-        return config
-    root = user_data_root.resolve()
-    for (section, key), relative in USER_DATA_FILES.items():
-        value = config.get(section, {}).get(key)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        current = Path(value)
-        if not current.is_absolute():
-            continue
-        try:
-            current.resolve().relative_to(root)
-            continue  # already under this user-data folder
-        except ValueError:
-            pass
-        # Only paths that setup generated (".../user-data/<relative>") are moved along;
-        # a custom location the user typed is left alone.
-        if current.as_posix().lower().endswith(("/user-data/" + relative).lower()):
-            config[section][key] = str(root / relative)
-    return config
+# Settings that name the streamer's own files and folders; turn them into paths with user_path.
+USER_DATA_PATH_KEYS: tuple[tuple[str, str], ...] = (
+    ("defense", "blocklist_path"),
+    ("defense", "whitelist_path"),
+    ("slang", "dict_path"),
+    ("archive", "db_path"),
+    ("archive", "backup_dir"),
+    ("log", "dir"),
+)
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     if not path.exists():
         return copy.deepcopy(DEFAULTS)
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         user_config = json.load(f)
-    return _anchor_user_data_paths(_migrate(deep_merge(DEFAULTS, user_config), user_config))
+    return _migrate(deep_merge(DEFAULTS, user_config), user_config)
 
 
 def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
@@ -390,6 +380,19 @@ def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
         stored_schema = 1
     if stored_schema < 2 and config.get("vad", {}).get("engine") == "energy":
         config["vad"]["engine"] = "silero"
+    if stored_schema < 3:
+        # Setup used to store "<install>/user-data/<default>" as an absolute path, which kept
+        # pointing at the old folder after the install moved. A custom location is kept.
+        for section, key in USER_DATA_PATH_KEYS:
+            default = DEFAULTS[section].get(key)
+            value = config.get(section, {}).get(key)
+            if (
+                isinstance(default, str)
+                and isinstance(value, str)
+                and Path(value).is_absolute()
+                and Path(value).as_posix().lower().endswith("/user-data/" + default.lower())
+            ):
+                config[section][key] = default
     config["config_schema"] = CONFIG_SCHEMA
     return config
 

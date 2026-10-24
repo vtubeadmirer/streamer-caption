@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 
 
 SCHEMA_VERSION = 3
@@ -32,10 +32,7 @@ def _decode_json(value: str | None) -> Any:
 
 
 def resolve_archive_path(path: str | Path) -> Path:
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = PROJECT_ROOT / candidate
-    return candidate.resolve()
+    return user_path(path).resolve()
 
 
 class TranscriptArchive:

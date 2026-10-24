@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.config import PROJECT_ROOT
+from core.config import user_path
 
 
 class SlangDictionary:
     def __init__(self, config: dict[str, Any]) -> None:
-        self.path = PROJECT_ROOT / config["slang"]["dict_path"]
+        self.path = user_path(config["slang"]["dict_path"])
         self.prompt_max_chars = max(
             0, int(config["slang"].get("prompt_max_chars", 800))
         )

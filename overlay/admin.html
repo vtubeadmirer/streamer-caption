@@ -1262,12 +1262,14 @@
       updateBanner.hidden = !show;
     }
 
-    async function pollUpdate(trigger) {
+    // GET only: the server starts a cached check when its last one is over an hour old, so page
+    // loads and restart reloads never spend GitHub's anonymous API quota (60 requests per hour).
+    async function pollUpdate() {
       try {
-        const snapshot = trigger ? await postJson("/api/update/check") : await api("/api/update/status");
+        const snapshot = await api("/api/update/status");
         renderUpdate(snapshot);
         const busy = ["starting", "checking", "downloading"].includes((snapshot.install || {}).state) || (snapshot.check || {}).state === "checking";
-        if (busy) setTimeout(() => pollUpdate(false), 1000);
+        if (busy) setTimeout(pollUpdate, 1000);
       } catch (error) {
         // older server or offline: no banner
       }
@@ -1276,7 +1278,7 @@
     document.getElementById("updateInstall").addEventListener("click", async () => {
       try {
         renderUpdate(await postJson("/api/update/install"));
-        setTimeout(() => pollUpdate(false), 800);
+        setTimeout(pollUpdate, 800);
       } catch (error) {
         updateText.textContent = String(error);
       }
@@ -1352,8 +1354,8 @@
       try { await postJson("/api/support/reveal", { path: bugBundle.path }); }
       catch (error) { document.getElementById("bugResult").textContent = String(error); }
     });
-    pollUpdate(true);
-    setInterval(() => pollUpdate(false), 60000);
+    pollUpdate();
+    setInterval(pollUpdate, 60000);
 
     const requestedTheme = new URLSearchParams(location.search).get("theme");
     applyTheme(requestedTheme || localStorage.getItem("streamerCaptionAdminTheme") || "light");

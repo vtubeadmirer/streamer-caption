@@ -76,7 +76,9 @@ function Install-RuntimeArchive([string]$Zip, [string]$ExpectedSha, [string]$Ver
         Remove-Item -LiteralPath $Zip -Force
         throw "실행 환경 파일 검증에 실패했습니다 (SHA-256 불일치). 다시 실행하면 새로 받습니다."
     }
-    $staging = Join-Path $InstallRoot ("runtime\.staging-" + [guid]::NewGuid().ToString("N"))
+    # Short names (8 hex): every extracted path includes this folder, and without long-path
+    # support Windows stops at 260 characters. updater.py sweeps stale .staging-*/.old-* folders.
+    $staging = Join-Path $InstallRoot ("runtime\.staging-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -84,7 +86,7 @@ function Install-RuntimeArchive([string]$Zip, [string]$ExpectedSha, [string]$Ver
         $extracted = Join-Path $staging ".venv"
         if (-not (Test-Path -LiteralPath (Join-Path $extracted "Scripts\python.exe"))) { throw "runtime archive has no .venv\Scripts\python.exe" }
         if (Test-Path -LiteralPath $RuntimeRoot) {
-            $old = Join-Path $InstallRoot ("runtime\.old-" + [guid]::NewGuid().ToString("N"))
+            $old = Join-Path $InstallRoot ("runtime\.old-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
             Move-Item -LiteralPath $RuntimeRoot -Destination $old
             Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
         }

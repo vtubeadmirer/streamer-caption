@@ -110,13 +110,17 @@
     try {
       devices = await getJson("/api/devices");
       // /api/devices: microphones are InputDevice{index,name,channels,...}; playback devices are SystemAudioDevice{id,name,is_default}.
-      // Windows lists every microphone once per host API (MME, DirectSound, WASAPI...); show each name once.
+      // Windows lists every microphone once per host API (MME, DirectSound, WASAPI, WDM-KS). Show
+      // the devices of one API only. MME first: it resamples to the app's 16 kHz for any device,
+      // while WASAPI shared mode refuses non-native rates ("Invalid sample rate"). The currently
+      // configured device is always kept so an existing choice is never hidden.
+      const all = devices.devices || [];
+      const apiOrder = ["MME", "Windows DirectSound", "Windows WASAPI"];
+      const preferred = apiOrder.map((api) => all.filter((d) => (d.hostapi || "") === api)).find((list) => list.length) || all;
       const seen = new Set();
-      const mics = (devices.devices || []).filter((d) => {
-        const key = d.name.replace(/\s*\(.*$/, "").trim().toLowerCase();
-        if (seen.has(key) && d.index !== config.audio?.device) return false;
-        seen.add(key); return true;
-      });
+      const mics = preferred.filter((d) => { if (seen.has(d.name)) return false; seen.add(d.name); return true; });
+      const current = all.find((d) => d.index === config.audio?.device);
+      if (current && !mics.some((d) => d.index === current.index || d.name === current.name)) mics.unshift(current);
       fillSelect($("mic"), mics, config.audio?.device, (d) => d.name, (d) => d.index);
       fillSelect($("sys"), devices.system_devices || [], config.audio?.system_device, (d) => `${d.name}${d.is_default ? " (기본 출력)" : ""}`, (d) => d.name);
       if (!(devices.devices || []).length) $("micStatus").textContent = "마이크를 찾지 못했습니다. 연결을 확인한 뒤 새로고침하세요.";

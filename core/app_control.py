@@ -16,6 +16,7 @@ from typing import Any
 from core import app_info
 
 CHECK_TTL_SEC = 60 * 60  # in-process cache so opening the admin page does not hit GitHub every time
+CHECK_ERROR_RETRY_SEC = 10 * 60  # offline or rate-limited: retry a failed check this often at most
 
 
 class AppController:
@@ -58,9 +59,20 @@ class AppController:
 
     # ------------------------------------------------------------------ update check
     def snapshot(self) -> dict[str, Any]:
+        """State for GET /api/update/status, which the admin page calls on every load. It also
+        starts a cached (non-forced) check when none ran within CHECK_TTL_SEC, so the page never
+        has to force one: the updater's on-disk cache then answers most loads without GitHub."""
+        with self._lock:
+            installing = self._install_thread is not None and self._install_thread.is_alive()
+        if not installing:
+            self._start_check(force=False)
+        return self._snapshot()
+
+    def _snapshot(self) -> dict[str, Any]:
+        app = app_info.describe()  # reads VERSION, state.json and updater.json: keep it out of the lock
         with self._lock:
             return {
-                "app": app_info.describe(),
+                "app": app,
                 "managed": self.managed,
                 "check": dict(self._check),
                 "install": dict(self._install),
@@ -69,24 +81,35 @@ class AppController:
             }
 
     def check(self, *, force: bool = False, wait: bool = False) -> dict[str, Any]:
-        """Start (or reuse) an update check. Returns the current snapshot."""
+        """Start (or reuse) an update check. Returns the current snapshot. force=True bypasses both
+        caches and is meant for an explicit user action (POST /api/update/check, tools)."""
+        thread = self._start_check(force=force)
+        if wait and thread is not None:
+            thread.join(timeout=90)
+        return self._snapshot()
+
+    def _start_check(self, *, force: bool) -> threading.Thread | None:
+        """The running check thread, a new one when the last result is stale (or force), else None."""
         if not self.managed:
             with self._lock:
                 self._check = {"state": "done", "available": False, "configured": False, "reason": "not_managed"}
-            return self.snapshot()
+            return None
         with self._lock:
-            fresh = self._check.get("state") == "done" and (time.monotonic() - self._check_at) < CHECK_TTL_SEC
-            running = self._check_thread is not None and self._check_thread.is_alive()
-            if running or (fresh and not force):
-                thread = self._check_thread
-            else:
-                self._check = {"state": "checking"}
-                thread = threading.Thread(target=self._run_check, args=(force,), name="update-check", daemon=True)
-                self._check_thread = thread
-                thread.start()
-        if wait and thread is not None:
-            thread.join(timeout=90)
-        return self.snapshot()
+            if self._check_thread is not None and self._check_thread.is_alive():
+                return self._check_thread
+            age = time.monotonic() - self._check_at
+            state = self._check.get("state")
+            fresh = self._check_at > 0 and (
+                (state == "done" and age < CHECK_TTL_SEC) or (state == "error" and age < CHECK_ERROR_RETRY_SEC)
+            )
+            if fresh and not force:
+                return None
+            # Keep the last answer visible (banner stays up) while the new check runs.
+            self._check = {**self._check, "state": "checking"} if state == "done" else {"state": "checking"}
+            thread = threading.Thread(target=self._run_check, args=(force,), name="update-check", daemon=True)
+            self._check_thread = thread
+            thread.start()
+            return thread
 
     def _run_check(self, force: bool) -> None:
         module = self._module()
@@ -122,20 +145,20 @@ class AppController:
             if self._check.get("latest_version") == version:
                 self._check["available"] = False
                 self._check["skipped"] = True
-        return self.snapshot()
+        return self._snapshot()
 
     # ------------------------------------------------------------------ install
     def start_update(self) -> dict[str, Any]:
         if not self.managed:
             raise RuntimeError("this copy is not installed with the launcher, so it cannot update itself")
         with self._lock:
-            if self._install_thread is not None and self._install_thread.is_alive():
-                return self.snapshot()
-            self._install = {"state": "starting", "label": "", "done": 0, "total": 0, "percent": 0}
-            thread = threading.Thread(target=self._run_update, name="update-install", daemon=True)
-            self._install_thread = thread
-            thread.start()
-        return self.snapshot()
+            # A second click while installing just reports progress (the snapshot takes the lock itself).
+            if self._install_thread is None or not self._install_thread.is_alive():
+                self._install = {"state": "starting", "label": "", "done": 0, "total": 0, "percent": 0}
+                thread = threading.Thread(target=self._run_update, name="update-install", daemon=True)
+                self._install_thread = thread
+                thread.start()
+        return self._snapshot()
 
     def _progress(self, label: str, done: int, total: int) -> None:
         with self._lock:

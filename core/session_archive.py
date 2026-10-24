@@ -129,11 +129,17 @@ class SessionArchiveRecorder:
         except Exception as exc:
             self._record_error(exc)
 
-    def close(self, metadata: dict[str, Any] | None = None) -> dict[str, str]:
+    def close(self, metadata: dict[str, Any] | None = None, *, relaunch: bool = False) -> dict[str, str]:
+        """End the session. With ``relaunch=True`` (settings change / update restart) the stream is
+        still live: no recap is forced for the unfinished bucket, no report is written and the
+        overlays get ``session_paused`` instead of ``broadcast_ended``."""
         if not self.enabled or self.store is None:
             return {}
         close_metadata = dict(metadata or {})
+        close_metadata["relaunch"] = bool(relaunch)
         report_paths: dict[str, str] = {}
+        lifecycle = "session_paused" if relaunch else "broadcast_ended"
+        lifecycle_text = "session paused for restart" if relaunch else "broadcast ended"
         try:
             if self.live_analysis is not None:
                 self.live_analysis.force_submit()
@@ -147,8 +153,9 @@ class SessionArchiveRecorder:
                     self.live_analysis.snapshot()
                 )
             if self.recap_worker is not None:
-                self.recap_worker.finalize(self.last_confirmed_offset)
-                if not self.recap_worker.stop(timeout=25.0):
+                if not relaunch:
+                    self.recap_worker.finalize(self.last_confirmed_offset)
+                if not self.recap_worker.stop(timeout=5.0 if relaunch else 25.0):
                     self._record_error(
                         RuntimeError("recap worker did not stop within 25 seconds")
                     )
@@ -157,7 +164,7 @@ class SessionArchiveRecorder:
                 self.session_id,
                 metadata=close_metadata,
             )
-            if self.auto_report:
+            if self.auto_report and not relaunch:
                 from features.broadcast_report import write_session_report
 
                 report_paths = write_session_report(
@@ -168,8 +175,8 @@ class SessionArchiveRecorder:
                 )
             self._record_lifecycle_event(
                 CaptionEvent(
-                    event_type="broadcast_ended",
-                    text="broadcast ended",
+                    event_type=lifecycle,
+                    text=lifecycle_text,
                     confidence=1.0,
                     audio_offset_sec=self.last_confirmed_offset,
                     engine="session_archive",
@@ -188,8 +195,8 @@ class SessionArchiveRecorder:
             self._record_error(exc)
             self._record_lifecycle_event(
                 CaptionEvent(
-                    event_type="broadcast_ended",
-                    text="broadcast ended",
+                    event_type=lifecycle,
+                    text=lifecycle_text,
                     confidence=0.0,
                     audio_offset_sec=self.last_confirmed_offset,
                     engine="session_archive",

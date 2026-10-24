@@ -10,11 +10,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.config import load_config
+from core.config import load_config, user_path
 
 
 def latest_memory_csv() -> Path | None:
-    log_dir = ROOT / load_config()["log"]["dir"]
+    log_dir = user_path(load_config()["log"]["dir"])
     paths = sorted(log_dir.glob("*/memory.csv"), key=lambda path: path.stat().st_mtime, reverse=True)
     return paths[0] if paths else None
 

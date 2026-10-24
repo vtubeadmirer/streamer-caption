@@ -8,7 +8,9 @@ import json
 import shutil
 import sys
 import tempfile
+import threading
 import time
+import types
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from core import app_control  # noqa: E402
 from core.admin_server import AdminServer, AdminState, issue_url  # noqa: E402
 from core.app_control import AppController  # noqa: E402
 from core.config import load_config  # noqa: E402
@@ -99,8 +102,51 @@ def main() -> int:
         finally:
             updater.urllib.request.urlopen = original
 
+        # GET /api/update/status (snapshot) is what the page calls on every load: it starts at most one
+        # NON-forced check per CHECK_TTL_SEC (so the updater's 24 h disk cache can answer), never a forced one.
+        calls: list[bool] = []
+        gate = threading.Event()
+        failing = {"on": False}
+
+        def fake_check(install_root, force=False):
+            calls.append(force)
+            gate.wait(5)
+            if failing["on"]:
+                raise RuntimeError("offline")
+            return {"configured": True, "available": True, "current_version": "1.0.0", "latest_version": "2.0.0"}
+
+        lazy = AppController(install_root=root, updater=types.SimpleNamespace(check_for_update=fake_check))
+        first = lazy.snapshot()
+        assert first["check"]["state"] == "checking" and first["app"]["version"], first
+        assert lazy.snapshot()["check"]["state"] == "checking" and calls == [False], "no second check while one runs"
+        gate.set()
+        lazy._check_thread.join(5)
+        for _ in range(3):
+            status = lazy.snapshot()
+            assert status["check"]["state"] == "done" and status["check"]["latest_version"] == "2.0.0", status
+        assert calls == [False], f"a fresh result is reused, not re-fetched: {calls}"
+        gate.clear()
+        lazy._check_at -= app_control.CHECK_TTL_SEC + 1  # an hour later
+        stale = lazy.snapshot()
+        assert stale["check"]["state"] == "checking" and stale["check"]["available"] is True, "old answer stays up while re-checking"
+        gate.set()
+        lazy._check_thread.join(5)
+        assert calls == [False, False], calls
+        failing["on"] = True
+        lazy._check_at -= app_control.CHECK_TTL_SEC + 1
+        lazy.snapshot()
+        lazy._check_thread.join(5)
+        assert lazy.snapshot()["check"]["state"] == "error" and calls == [False, False, False], calls
+        lazy._check_at -= app_control.CHECK_ERROR_RETRY_SEC + 1  # a failed check is retried sooner than an hour
+        lazy.snapshot()
+        lazy._check_thread.join(5)
+        assert calls == [False, False, False, False], calls
+        failing["on"] = False
+        assert lazy.check(force=True, wait=True)["check"]["state"] == "done" and calls[-1] is True, "force only on request"
+
         # Not managed (source checkout): no banner, install refused, restart still works.
         plain = AppController(install_root=None)
+        assert plain.snapshot()["check"]["reason"] == "not_managed" and plain._check_thread is None
         assert plain.check(wait=True)["check"]["reason"] == "not_managed"
         try:
             plain.start_update()
@@ -122,6 +168,7 @@ def main() -> int:
             assert code == 200 and app["version"] and app["issues_url"].startswith("https://github.com/"), app
             code, status = http("GET", "/api/update/status")
             assert code == 200 and status["check"]["latest_version"] == "1.3.0", status
+            assert status["check"]["state"] == "done", "a status read within the hour must not start another check"
             code, skip = http("POST", "/api/update/skip", {"version": ""})
             assert code == 400, skip
             code, status = http("GET", "/api/status")
@@ -165,6 +212,7 @@ def main() -> int:
             html = urllib.request.urlopen(f"http://127.0.0.1:{PORT}/admin", timeout=5).read().decode("utf-8")
             for marker in ("updateBanner", "bugDialog", "/api/update/status", "/api/app/restart", "/api/support/bundle"):
                 assert marker in html, marker
+            assert "/api/update/check" not in html, "page loads must not force a GitHub check"
             setup_html = urllib.request.urlopen(f"http://127.0.0.1:{PORT}/setup", timeout=5).read().decode("utf-8")
             assert "/api/app/restart" in setup_html
         finally:

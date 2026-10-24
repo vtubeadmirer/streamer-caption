@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import shutil
 import sys
@@ -10,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.config import DEFAULTS, deep_merge, save_config
+from core.config import load_config, save_config
 
 
 PERSONAL_FILES = (
@@ -19,24 +18,6 @@ PERSONAL_FILES = (
     "data/whitelist.txt",
     "data/blocklist.txt",
 )
-
-
-def _absolute_user_paths(config: dict, user_data: Path) -> dict:
-    result = copy.deepcopy(config)
-    result["defense"]["blocklist_path"] = str(user_data / "data" / "blocklist.txt")
-    result["defense"]["whitelist_path"] = str(user_data / "data" / "whitelist.txt")
-    result["slang"]["dict_path"] = str(user_data / "data" / "slang_dict.json")
-    result["archive"]["db_path"] = str(user_data / "data" / "transcripts.sqlite3")
-    result["log"]["dir"] = str(user_data / "logs")
-    return result
-
-
-def _read_json(path: Path) -> dict:
-    with path.open("r", encoding="utf-8-sig") as handle:
-        value = json.load(handle)
-    if not isinstance(value, dict):
-        raise ValueError(f"expected a JSON object: {path}")
-    return value
 
 
 def bootstrap_user_data(user_data: Path, migrate_from: Path | None = None) -> dict:
@@ -56,12 +37,9 @@ def bootstrap_user_data(user_data: Path, migrate_from: Path | None = None) -> di
                 migrated.append(relative)
 
     config_path = user_data / "config.json"
-    if config_path.exists():
-        config = deep_merge(DEFAULTS, _read_json(config_path))
-    else:
-        config = copy.deepcopy(DEFAULTS)
-    config = _absolute_user_paths(config, user_data)
-    save_config(config, config_path)
+    # Through load_config so the schema migrations (e.g. older setups' absolute paths) run
+    # before save_config stamps the current config_schema.
+    save_config(load_config(config_path), config_path)
 
     defaults = {
         user_data / "data" / "slang_dict.json": "{}\n",

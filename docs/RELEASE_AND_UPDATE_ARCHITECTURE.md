@@ -66,9 +66,13 @@ The launcher checks GitHub at most once every `check_interval_hours` (24 hours b
 3. It downloads `release-manifest.json` and the named ZIP asset.
 4. It verifies launcher compatibility and SHA-256.
 5. It rejects symbolic links and paths that escape the staging directory.
-6. It extracts into a staging folder and validates `VERSION`.
+6. It extracts into a staging folder (`versions/.staging-<8 hex>`) and validates `VERSION`.
 7. It moves the complete folder into `versions` and updates `state.json` atomically.
 8. On launch failure, the launcher offers rollback to `previous_version`.
+
+Versions compare numerically, prerelease parts included (`1.2.0-dev.9 < 1.2.0-dev.10 < 1.2.0-rc.1 < 1.2.0`, SemVer precedence).
+
+Housekeeping (`keep_versions`, default 2 in `updater.json`): after every successful `install_archive`, `prune_install()` deletes the oldest `versions/<v>` folders until at most `keep_versions` remain. It never deletes `current_version`, `previous_version` (rollback), the version that is running the update (the updater infers it from its own path, `versions/<v>/launcher/updater.py`), or a version folder holding files a release never ships (`config.json`, slang/allow/block lists, `*.sqlite3`, recordings, real `logs`/`reports`/`samples` folders), which means the app once ran from there without the launcher's `user-data`. A folder is renamed to `versions/.trash-*` before deletion, so a version still in use by any process (open file, working directory) is skipped whole instead of half-deleted, and the junctions inside it (`.venv` to the runtime, `logs`/`reports`/`samples` to `user-data`) are removed as links, never followed. It also deletes `downloads/*.zip` and `*.partial` except the app ZIP just installed and a runtime ZIP that `runtime.json` still waits for, and sweeps `versions/.staging-*`, `versions/.trash-*`, `runtime/.staging-*` and `runtime/.old-*` folders older than an hour (left by interrupted installs). Housekeeping is best effort: failures are listed in the result's `pruned.errors` and never fail the install.
 
 GitHub release process
 
@@ -102,7 +106,12 @@ Decisions still required before public launch
 - `core/app_control.py` (`AppController`, owned by `AdminState`) runs the update
   check in a background thread with a one-hour in-process cache, installs
   releases with a progress hook (`updater._download(progress=...)`) and records
-  relaunch requests.
+  relaunch requests. The admin page only reads `GET /api/update/status`; that
+  call starts a non-forced check (answered by the 24-hour `update-check-cache.json`
+  when possible) when none ran in the last hour (ten minutes after a failed one),
+  so page loads and restart reloads do not spend GitHub's anonymous API quota
+  (60 requests per hour). `POST /api/update/check` forces a check and is kept for
+  an explicit user action or tools.
 - Admin routes: `GET /api/app`, `GET /api/update/status`,
   `POST /api/update/check|install|skip`, `POST /api/app/restart`,
   `POST /api/support/bundle`, `POST /api/support/reveal`.
@@ -163,5 +172,41 @@ mapped DLLs). On the relaunch, `launcher.ps1` sees `runtime.json` differ from
 `runtime/.venv/RUNTIME_VERSION` and exits 77; `bootstrap.ps1` then runs
 `Ensure-Runtime` with no Python alive and starts the launcher again. Venv installs
 (no `runtime.json`) ignore the runtime fields. `install_archive` also copies the new
-version's `launcher/*` over `<root>/launcher/`, so launcher fixes reach existing
-installs; the app loads `updater.py` from the running version first.
+version's `launcher/` scripts (`bootstrap.ps1`, `launcher.ps1`, `updater.py`) over
+`<root>/launcher/`, and `StreamerCaption.bat` over `<root>/StreamerCaption.bat` when
+one is already there (portable layout; it is never put into `launcher/`, and the stray
+copy 1.1.3 left there is removed), so launcher fixes reach existing installs; the app
+loads `updater.py` from the running version first. `bootstrap.ps1` extracts the runtime
+to `runtime/.staging-<8 hex>` (short, for MAX_PATH) and moves the old one to
+`runtime/.old-<8 hex>` before deleting it.
+
+`tools/build_runtime.py` pins its two bootstrap downloads by SHA-256: the embeddable
+CPython ZIP and a pip wheel from PyPI (pip runs from the wheel, replacing the unpinned
+`get-pip.py`); any mismatch fails the build. `--verify-downloads-only` fetches and
+checks just those two files (and that pip runs from the wheel) without building.
+
+## 10. Recaps through installed CLIs
+
+When no Ollama or OpenAI-compatible endpoint answers, recaps can use the streamer's
+own logged-in `claude` or `codex` CLI (`features/recap.py`, `CliProvider`). The transcript
+is untrusted input (PC audio includes other people) and the answer goes on the stream
+overlay, so the CLI runs as a plain text completion:
+
+- the resolved path from `shutil.which` is executed (npm installs are `claude.cmd` /
+  `codex.cmd`, which CreateProcess does not find by bare name);
+- the prompt goes through stdin, never argv (visible to other processes, length-capped);
+- the working directory is a fresh empty temp folder, never the app folder;
+- Claude: `claude -p --output-format text --no-session-persistence --strict-mcp-config
+  --tools ""` (no tools, no MCP servers, no saved session);
+  Codex: `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never
+  --output-last-message <tmp>/last-message.txt -` (`-` reads stdin; exec never asks for
+  approval; Codex cannot run without tools, so the read-only sandbox is its limit);
+- a timeout (`archive.recap.timeout_sec`, 60 s) kills the whole process tree;
+  any non-zero exit or timeout (including a CLI too old for these flags) falls back
+  to the extractive recap;
+- whatever any model returns is cut to at most `max_bullets` bullets of 120
+  characters and a 60-character headline, with control and format characters removed.
+
+Ollama prefers the smallest installed chat model of at most 8B parameters (preferred
+families first), so a recap does not compete with the speech model for VRAM, and logs
+the model it picked.

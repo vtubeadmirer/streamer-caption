@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core.config import user_path
+
 
 class SimulStreamingError(RuntimeError):
     pass
@@ -105,8 +107,8 @@ class SimulStreamingClient:
         if self._socket is not None:
             return
         if self.start_server:
-            logs_dir = Path(__file__).resolve().parents[2] / "logs"
-            logs_dir.mkdir(exist_ok=True)
+            logs_dir = user_path(self.config.get("log", {}).get("dir", "logs"))
+            logs_dir.mkdir(parents=True, exist_ok=True)
             log_path = logs_dir / f"simulstreaming_server_{time.strftime('%Y%m%d_%H%M%S')}.log"
             self._server_log = log_path.open("wb")
             self._process = subprocess.Popen(
