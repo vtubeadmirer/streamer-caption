@@ -59,6 +59,8 @@ jobs:
           } else {
             "published=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
+          # gh's "release not found" left $LASTEXITCODE=1, which the runner would report as this step's result.
+          exit 0
       - name: Build runtime ZIP
         if: steps.exists.outputs.published != 'true'
         run: python tools/build_runtime.py --runtime-version ${{ steps.ver.outputs.version }}
