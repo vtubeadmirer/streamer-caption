@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "channel": "stable",
   "asset_name": "",
   "sha256": "",
-  "runtime_version": "py312-v2",
+  "runtime_version": "py312-v3",
   "config_schema": 1,
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "설정 경로가 설치 폴더를 따라감(기본값 초기화가 기록·블록리스트를 옮기지 않음), 재시작해도 방송 종료로 처리되지 않음, 마이크 목록 중복 제거 수정, 요약 CLI(Claude/Codex) 격리·출력 길이 제한, 업데이트 체크 캐시 사용, 옛 버전·다운로드 자동 정리, 빌드 다운로드 해시 고정.",
-  "runtime_asset_name": "runtime-py312-v2.zip",
+  "release_notes": "의존성 업데이트(numpy 2.5.4, sounddevice 0.5.6, silero-vad 6.2.3, websockets 17.1)와 그에 맞춘 새 실행 환경 py312-v3. 기능 변화 없음.",
+  "runtime_asset_name": "runtime-py312-v3.zip",
   "runtime_sha256": "",
   "runtime_size": 0,
-  "runtime_release_tag": "runtime-py312-v2"
+  "runtime_release_tag": "runtime-py312-v3"
 }

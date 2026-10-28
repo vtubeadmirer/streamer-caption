@@ -74,7 +74,7 @@ def should_include(source: Path, path: Path) -> bool:
     name = relative.as_posix()
     if path.is_symlink():
         return False
-    if any(part in EXCLUDED_DIRS for part in relative.parts):
+    if any(part in EXCLUDED_DIRS or part.endswith("venv") for part in relative.parts):  # any virtualenv folder
         return False
     if name in EXCLUDED_FILES:
         return False
@@ -154,7 +154,7 @@ def _repository(source: Path) -> str:
 
 def _runtime_fields(template: dict[str, Any], dist: Path, repository: str) -> dict[str, Any]:
     """Describe the portable runtime: from dist/runtime-manifest.json when a runtime was built, else the template."""
-    runtime_version = str(template.get("runtime_version") or "py312-v2")
+    runtime_version = str(template.get("runtime_version") or "py312-v3")
     asset_name = str(template.get("runtime_asset_name") or f"runtime-{runtime_version}.zip")
     sha256 = str(template.get("runtime_sha256") or "")
     size = int(template.get("runtime_size") or 0)

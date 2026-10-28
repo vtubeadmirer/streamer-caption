@@ -646,8 +646,8 @@ binaries remain subject to their own license terms. See
 
 1. Unzip anywhere (not inside a synced folder such as OneDrive).
 2. Double-click `StreamerCaption.bat`.
-   - First run only: the shared Python runtime (about 800 MB, `runtime-py312-v2.zip`
-     from the `runtime-py312-v2` GitHub release) is downloaded with a progress bar,
+   - First run only: the shared Python runtime (about 800 MB, `runtime-py312-v3.zip`
+     from the `runtime-py312-v3` GitHub release) is downloaded with a progress bar,
      verified by SHA-256 and unpacked into `runtime/.venv`. It bundles NVIDIA cuBLAS,
      so GPU captions need only the NVIDIA driver, not a CUDA Toolkit. The speech model
      is downloaded when captions start.
@@ -657,7 +657,7 @@ binaries remain subject to their own license terms. See
 3. Every later run is one double-click: captions start and the admin page is one
    click away.
 
-Offline PCs: download `runtime-py312-v2.zip` once, put it next to
+Offline PCs: download `runtime-py312-v3.zip` once, put it next to
 `StreamerCaption.bat`, and it is used instead of the network. The layout is the
 same side-by-side scheme as the installed version (`versions/<ver>`, `runtime/`,
 `user-data/`), so updates and rollback work identically; when a release needs a

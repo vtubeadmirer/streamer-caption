@@ -18,6 +18,9 @@ updates:
           - "version-update:semver-major"
       - dependency-name: "torch"
       - dependency-name: "torchaudio"
+      # Must match the CUDA build of the pinned ctranslate2; bumped by hand with ctranslate2.
+      - dependency-name: "nvidia-cublas-cu12"
+      - dependency-name: "ctranslate2"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

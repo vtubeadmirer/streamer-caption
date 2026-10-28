@@ -4,13 +4,13 @@ Layout inside the ZIP (mirrors a venv so every existing .bat keeps working throu
 the versions/<ver>/.venv junction):
 
     .venv/
-      RUNTIME_VERSION          e.g. py312-v2
+      RUNTIME_VERSION          e.g. py312-v3
       Scripts/python.exe       CPython embeddable distribution
       Scripts/python312._pth   adds ../Lib/site-packages and enables `import site`
       Lib/site-packages/       pip-installed requirements.txt (incl. NVIDIA cuBLAS for GPU captions)
 
 Usage:
-    python tools/build_runtime.py --runtime-version py312-v2 [--dist dist]
+    python tools/build_runtime.py --runtime-version py312-v3 [--dist dist]
     python tools/build_runtime.py --verify-downloads-only
 
 Produces dist/runtime-<runtime-version>.zip and dist/runtime-manifest.json
@@ -266,7 +266,7 @@ def build(runtime_version: str, dist: Path, requirements: Path, keep_build: bool
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the portable runtime ZIP")
-    parser.add_argument("--runtime-version", default="py312-v2")
+    parser.add_argument("--runtime-version", default="py312-v3")
     parser.add_argument("--dist", default=str(ROOT / "dist"))
     parser.add_argument("--requirements", default=str(ROOT / "requirements.txt"))
     parser.add_argument("--keep-build", action="store_true")

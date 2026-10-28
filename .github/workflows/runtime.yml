@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       runtime_version:
-        description: "Runtime version tag suffix (e.g. py312-v2)"
+        description: "Runtime version tag suffix (e.g. py312-v3)"
         required: true
-        default: "py312-v2"
+        default: "py312-v3"
   push:
     branches: ["main"]
     paths:
@@ -36,7 +36,7 @@ jobs:
         run: |
           $v = "${{ github.event.inputs.runtime_version }}"
           if (-not $v) { $v = (Get-Content release-manifest.json -Raw | ConvertFrom-Json).runtime_version }
-          if (-not $v) { $v = "py312-v2" }
+          if (-not $v) { $v = "py312-v3" }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Check whether this runtime is already published
         id: exists
