@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "channel": "stable",
   "asset_name": "",
   "sha256": "",
@@ -9,7 +9,7 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "의존성 업데이트(numpy 2.5.4, sounddevice 0.5.6, silero-vad 6.2.3, websockets 17.1)와 그에 맞춘 새 실행 환경 py312-v3. 기능 변화 없음.",
+  "release_notes": "시작 창의 업데이트 안내 한글 깨짐 수정. 1.2.1의 의존성 업데이트와 새 실행 환경 py312-v3 포함.",
   "runtime_asset_name": "runtime-py312-v3.zip",
   "runtime_sha256": "",
   "runtime_size": 0,

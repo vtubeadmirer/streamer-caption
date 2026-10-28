@@ -12,6 +12,7 @@
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
+$env:PYTHONIOENCODING = "utf-8"  # piped Python output must match the UTF-8 console decoding
 if (-not $InstallRoot) { $InstallRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..")) }
 $RuntimeRoot = Join-Path $InstallRoot "runtime\.venv"
 $RuntimePython = Join-Path $RuntimeRoot "Scripts\python.exe"

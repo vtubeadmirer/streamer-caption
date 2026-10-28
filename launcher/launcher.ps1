@@ -10,6 +10,10 @@ param(
 #             (portable one-button mode, called by bootstrap.ps1)
 
 $ErrorActionPreference = "Stop"
+# Python writes piped output in the ANSI code page (CP949 on Korean Windows) unless told
+# otherwise; the console decodes UTF-8, so Korean release notes came out garbled.
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 if (-not $InstallRoot) {
     $InstallRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 }

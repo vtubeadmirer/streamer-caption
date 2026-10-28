@@ -67,6 +67,9 @@ def main() -> int:
         raw = script.read_bytes()
         if any(byte > 127 for byte in raw):
             assert raw.startswith(bytes([0xEF, 0xBB, 0xBF])), f"{script.name} has non-ASCII text but no UTF-8 BOM (Windows PowerShell 5.1 would print mojibake)"
+    for script in ("launcher.ps1", "bootstrap.ps1"):
+        text = (ROOT / "launcher" / script).read_text(encoding="utf-8-sig")
+        assert '$env:PYTHONIOENCODING = "utf-8"' in text, f"{script} must force UTF-8 on piped Python output (Korean text)"
     print("portable_release_ok")
     return 0
 
