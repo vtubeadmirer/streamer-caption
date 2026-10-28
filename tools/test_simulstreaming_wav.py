@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument("audio", nargs="?", default="samples/test_clip.wav")
     parser.add_argument("--python", dest="runtime_python", default="experiments/simulstreaming-runtime/.venv/Scripts/python.exe")
     parser.add_argument("--model", default="experiments/simulstreaming-runtime/models/large-v3.pt")
-    parser.add_argument("--chunk-sec", type=float, default=0.32)
+    parser.add_argument("--chunk-sec", type=float, default=0.064, help="feed block size (the app's capture block)")
     parser.add_argument("--no-realtime", action="store_true")
     args = parser.parse_args()
 
@@ -72,9 +72,6 @@ def main() -> int:
         "allow_auto_download": False,
         "start_server": True,
         "use_vac": True,
-        "min_chunk_size": 0.8,
-        "vac_chunk_size": args.chunk_sec,
-        "connect_timeout_sec": 120.0,
     })
     client = SimulStreamingClient(config)
     messages: list[dict] = []

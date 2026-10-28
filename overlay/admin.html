@@ -59,6 +59,26 @@
         <div>Warning</div><strong id="warningText">-</strong>
       </div>
       <div class="meter"><div id="rmsMeter"></div></div>
+      <div id="enginePanel" class="engine-panel">
+        <div class="engine-head">
+          <strong><span class="ko-text">자막 엔진</span><span class="en-text">Caption engine</span></strong>
+          <div class="segmented" role="group" aria-label="자막 엔진">
+            <button type="button" data-engine="baseline" aria-pressed="true"><span class="ko-text">기본 (빠름)</span><span class="en-text">Standard (fast)</span></button>
+            <button type="button" data-engine="simulstreaming" aria-pressed="false"><span class="ko-text">정확 우선</span><span class="en-text">Accuracy first</span></button>
+          </div>
+        </div>
+        <p id="engineDescription" class="help"></p>
+        <p id="engineUnavailable" class="help" hidden></p>
+        <label id="engineModelField" hidden><span class="hint" title="자동은 그래픽 메모리가 넉넉하면 large-v3, 아니면 large-v3-turbo를 씁니다."><span class="ko-text">정확 우선 모델</span><span class="en-text">Accuracy-first model</span></span>
+          <select id="engineModel"></select>
+        </label>
+        <div id="engineRunning" class="help"></div>
+        <div id="engineNotice" class="notice notice-warning" hidden></div>
+        <div id="engineActions" class="row" hidden>
+          <button id="engineApply" class="primary" type="button"><span class="ko-text">저장하고 다시 시작</span><span class="en-text">Save and restart</span></button>
+          <button id="engineCancel" type="button"><span class="ko-text">취소</span><span class="en-text">Cancel</span></button>
+        </div>
+      </div>
       <pre id="status">-</pre>
       <div class="row" style="margin-top:12px">
         <button id="refresh"><span class="ko-text">새로고침</span><span class="en-text">Refresh</span></button>
@@ -644,15 +664,18 @@
 
     async function loadAll() {
       state.textContent = "loading";
-      const [cfg, status, devices, profiles, slang] = await Promise.all([
+      const [cfg, status, devices, profiles, slang, engine] = await Promise.all([
         api("/api/config"),
         api("/api/status"),
         api("/api/devices").catch(error => ({ error: String(error), devices: [], system_devices: [] })),
         api("/api/profiles").catch(error => ({ error: String(error), profiles: [] })),
         api("/api/slang").catch(error => ({ error: String(error), slang: {}, whitelist: [] })),
+        api("/api/engine").catch(() => null),
       ]);
       config = cfg;
       slangState = slang;
+      engineOverview = engine;
+      enginePick = null;
       rawConfig.value = JSON.stringify(cfg, null, 2);
       statusEl.textContent = JSON.stringify(status, null, 2);
       bindStatus(status);
@@ -837,7 +860,141 @@
         document.getElementById("micState").textContent =
           uiText("화면 미리보기", "UI preview");
       }
+      renderEngine(status.engine);
     }
+
+    // ---- 자막 엔진 (기본 / 정확 우선)
+    let engineOverview = null;
+    let enginePick = null;  // { engine, model } chosen here but not saved yet
+    let engineRunning = {};
+
+    function engineOption(id) {
+      return (engineOverview?.options || []).find(option => option.id === id) || {};
+    }
+
+    function engineName(id) {
+      return id === "simulstreaming"
+        ? uiText("정확 우선", "Accuracy first")
+        : uiText("기본", "Standard");
+    }
+
+    function renderEngine(running) {
+      if (running) engineRunning = running;
+      const overview = engineOverview;
+      const panel = document.getElementById("enginePanel");
+      if (!overview) {
+        panel.hidden = true;
+        return;
+      }
+      panel.hidden = false;
+      const saved = overview.selected;
+      const savedModel = overview.simulstreaming?.model || "auto";
+      const selected = enginePick?.engine ?? saved;
+      const model = enginePick?.model ?? savedModel;
+      const accurate = engineOption("simulstreaming");
+      panel.querySelectorAll("[data-engine]").forEach(button => {
+        const option = engineOption(button.dataset.engine);
+        button.setAttribute("aria-pressed", String(button.dataset.engine === selected));
+        button.disabled = !option.available && button.dataset.engine !== saved;
+        button.title = option.available ? "" : (option.message || "");
+      });
+      const current = engineOption(selected);
+      document.getElementById("engineDescription").textContent =
+        uiText(current.description_ko || "", current.description_en || "");
+      const unavailable = document.getElementById("engineUnavailable");
+      unavailable.hidden = Boolean(accurate.available);
+      unavailable.textContent = accurate.available
+        ? ""
+        : uiText("정확 우선: ", "Accuracy first: ") + (accurate.message || "");
+      const modelField = document.getElementById("engineModelField");
+      const modelSelect = document.getElementById("engineModel");
+      modelField.hidden = selected !== "simulstreaming";
+      const models = overview.simulstreaming?.models || [];
+      modelSelect.innerHTML = "";
+      for (const item of models) {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = uiText(item.label_ko, item.label_en);
+        option.disabled = !item.available && item.id !== model;
+        modelSelect.append(option);
+      }
+      modelSelect.value = model;
+
+      const active = engineRunning?.active_engine;
+      const runningText = document.getElementById("engineRunning");
+      if (!active) {
+        runningText.textContent = uiText("자막 프로그램이 실행 중이 아닙니다.", "Captions are not running.");
+      } else {
+        const modelName = active === "simulstreaming" && engineRunning.model ? ` (${engineRunning.model})` : "";
+        runningText.textContent = uiText("지금 사용 중: ", "In use now: ") + engineName(active) + modelName;
+      }
+      const notice = document.getElementById("engineNotice");
+      const fallbackNotice = engineRunning?.reason && engineRunning?.notice;
+      const startingNotice = engineRunning?.requested_engine === "simulstreaming"
+        && engineRunning?.state && engineRunning.state !== "active" && engineRunning?.notice;
+      notice.hidden = !(fallbackNotice || startingNotice);
+      notice.className = "notice " + (fallbackNotice ? "notice-warning" : "notice-success");
+      notice.textContent = fallbackNotice || startingNotice || "";
+
+      const changed = selected !== saved || (selected === "simulstreaming" && model !== savedModel);
+      document.getElementById("engineActions").hidden = !(changed || overview.restart_required);
+    }
+
+    async function refreshEngineStatus() {
+      try {
+        const status = await api("/api/status");
+        renderEngine(status.engine || {});
+      } catch (error) {
+        // the app is restarting; the next poll catches up
+      }
+    }
+    document.querySelectorAll("#enginePanel [data-engine]").forEach(button => {
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        enginePick = {
+          engine: button.dataset.engine,
+          model: enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "auto",
+        };
+        renderEngine();
+      });
+    });
+    document.getElementById("engineModel").addEventListener("change", event => {
+      enginePick = {
+        engine: enginePick?.engine ?? engineOverview?.selected ?? "baseline",
+        model: event.target.value,
+      };
+      renderEngine();
+    });
+    document.getElementById("engineCancel").addEventListener("click", () => {
+      enginePick = null;
+      renderEngine();
+    });
+    document.getElementById("engineApply").addEventListener("click", async () => {
+      const engine = enginePick?.engine ?? engineOverview?.selected ?? "baseline";
+      const model = enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "auto";
+      state.textContent = uiText("자막 엔진 저장 중…", "Saving caption engine…");
+      try {
+        const response = await fetch("/api/engine", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ engine, model }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          state.textContent = body.error || uiText("저장하지 못했습니다.", "Could not save.");
+          return;
+        }
+        engineOverview = body;
+        enginePick = null;
+        renderEngine();
+        config = await api("/api/config");
+        rawConfig.value = JSON.stringify(config, null, 2);
+        await restartApp("settings");
+      } catch (error) {
+        state.textContent = String(error);
+      }
+    });
+    setInterval(refreshEngineStatus, 3000);
     function updateAudioSourceVisibility() {
       const source = document.getElementById("audioSource").value;
       document.getElementById("microphoneDeviceField").hidden =

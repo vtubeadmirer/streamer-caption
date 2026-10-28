@@ -36,7 +36,16 @@ def user_path(value: str | Path, *, root: Path | None = None) -> Path:
 
 # 2: Silero VAD became the default; stored "energy" from schema 1 is migrated.
 # 3: user-data paths are stored relative (see user_path); setup's absolute ones are rewritten.
-CONFIG_SCHEMA = 3
+# 4: SimulStreaming (정확 우선) defaults from the 2026-10 lab runs replace the frozen experiment values.
+CONFIG_SCHEMA = 4
+
+# simulstreaming values every config.json froze before schema 4 -> the measured defaults.
+_SIMULSTREAMING_SCHEMA4 = (
+    ("min_chunk_size", 0.8, 0.5),
+    ("vac_chunk_size", 0.32, 0.04),
+    ("frame_threshold", 25, 40),
+    ("connect_timeout_sec", 90.0, 180.0),
+)
 
 DEFAULTS: dict[str, Any] = {
     "config_schema": CONFIG_SCHEMA,
@@ -109,6 +118,8 @@ DEFAULTS: dict[str, Any] = {
         "min_segment_sec": 0.4,
     },
     "streaming": {
+        # Caption engine: "baseline" = 기본 (faster-whisper, gray preview then final) or
+        # "simulstreaming" = 정확 우선 (about 1 s later, text never changes; falls back to baseline).
         "engine": "baseline",
         "worker_mode": "process",
         "model": "large-v3",
@@ -138,22 +149,30 @@ DEFAULTS: dict[str, Any] = {
         "ws_cache_sec": 15,
     },
     "simulstreaming": {
-        "enabled": False,
+        "enabled": False,  # unused since streaming.engine selects the engine; kept for old configs
         "repo_dir": "experiments/vendor/SimulStreaming",
-        "python_executable": "",
-        "model_path": "",
-        "allow_auto_download": False,
+        "python_executable": "",  # "" = the optional runtime (see engines/simulstreaming/availability.py)
+        "model": "auto",  # auto | large-v3 | large-v3-turbo (auto: large-v3 when the GPU has room)
+        "model_dir": "",  # "" = <runtime>/models
+        "model_path": "",  # an explicit .pt file overrides model/model_dir
+        "allow_auto_download": False,  # the server never downloads a missing model
         "start_server": True,
         "host": "127.0.0.1",
-        "port": 43007,
-        "min_chunk_size": 0.8,
-        "vac_chunk_size": 0.32,
+        "port": 0,  # 0 = a free local port for each start
+        "min_chunk_size": 0.5,
+        "vac_chunk_size": 0.04,
         "audio_max_len": 30.0,
         "beams": 1,
-        "frame_threshold": 25,
+        "frame_threshold": 40,  # lab, large-v3 / turbo: 40 -> CER 0.7% / 1.0%, no phantoms; 25 -> 4.1% / 1.8%
         "use_vac": True,
         "never_fire": False,
-        "connect_timeout_sec": 90.0,
+        "connect_timeout_sec": 180.0,  # model load; faster-whisper captions meanwhile
+        "stall_timeout_sec": 15.0,  # no heartbeat this long -> fall back
+        "max_lag_sec": 10.0,  # this far behind the audio for 5 s -> fall back
+        "max_restarts": 2,  # retries per run after a crash/stall; 0 = never retry
+        "retry_delay_sec": 30.0,  # doubles with each retry
+        "standby_timeout_sec": 90.0,  # wait this long for the faster-whisper standby model
+        "switch_timeout_sec": 20.0,  # switch even without a pause after this long
     },
     "vad": {
         "engine": "silero",  # speech-probability VAD; falls back to energy if torch is unavailable
@@ -294,10 +313,16 @@ CONFIG_LIFETIME: dict[str, str] = {
     "streaming.stt_latency_target_p95_sec": "cold",
     "streaming.ws_cache_sec": "cold",
     "simulstreaming.enabled": "cold",
+    "simulstreaming.model": "cold",
+    "simulstreaming.model_dir": "cold",
     "simulstreaming.model_path": "cold",
     "simulstreaming.python_executable": "cold",
     "simulstreaming.min_chunk_size": "cold",
     "simulstreaming.vac_chunk_size": "cold",
+    "simulstreaming.frame_threshold": "cold",
+    "simulstreaming.stall_timeout_sec": "cold",
+    "simulstreaming.max_lag_sec": "cold",
+    "simulstreaming.max_restarts": "cold",
     "vad.engine": "cold",
     "vad.device": "cold",
     "vad.speech_threshold": "cold",
@@ -393,6 +418,16 @@ def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
                 and Path(value).as_posix().lower().endswith("/user-data/" + default.lower())
             ):
                 config[section][key] = default
+    if stored_schema < 4:
+        # save_config writes every default, so each config.json froze the experiment's values;
+        # only those exact values move, a deliberate setting stays.
+        simul = config.get("simulstreaming")
+        if isinstance(simul, dict):
+            for key, old, new in _SIMULSTREAMING_SCHEMA4:
+                if simul.get(key) == old:
+                    simul[key] = new
+            if simul.get("port") == 43007 and simul.get("start_server", True):
+                simul["port"] = 0
     config["config_schema"] = CONFIG_SCHEMA
     return config
 
@@ -413,6 +448,39 @@ def _bounded_number(
             f"{section}.{key} must be between {minimum} and {maximum}"
         )
     return number
+
+
+def _validate_simulstreaming(simul: Any) -> None:
+    if not isinstance(simul, dict):
+        raise TypeError("simulstreaming must be an object")
+    if simul.get("model", "auto") not in {"auto", "large-v3", "large-v3-turbo"}:
+        raise ValueError("simulstreaming.model must be auto, large-v3 or large-v3-turbo")
+    for key, low, high, integer in (
+        ("min_chunk_size", 0.1, 5, False),
+        ("vac_chunk_size", 0.02, 1, False),
+        ("audio_max_len", 5, 60, False),
+        ("frame_threshold", 1, 200, True),
+        ("beams", 1, 10, True),
+        ("connect_timeout_sec", 10, 1800, False),
+        ("stall_timeout_sec", 5, 300, False),
+        ("max_lag_sec", 2, 300, False),
+        ("max_restarts", 0, 10, True),
+        ("retry_delay_sec", 1, 3600, False),
+        ("standby_timeout_sec", 0, 1800, False),
+        ("switch_timeout_sec", 1, 600, False),
+    ):
+        if key not in simul:
+            continue
+        value = simul[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError(f"simulstreaming.{key} must be a number")
+        if not low <= float(value) <= high or (integer and int(value) != value):
+            raise ValueError(f"simulstreaming.{key} must be between {low} and {high}")
+    port = simul.get("port", 0)
+    if isinstance(port, bool) or not isinstance(port, int) or not (port == 0 or 1024 <= port <= 65535):
+        raise ValueError("simulstreaming.port must be 0 (automatic) or between 1024 and 65535")
+    if float(simul.get("min_chunk_size", 0.5)) >= float(simul.get("audio_max_len", 30.0)):
+        raise ValueError("simulstreaming.min_chunk_size must be smaller than audio_max_len")
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -504,6 +572,9 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(
             "streaming.worker_mode must be thread or process"
         )
+    if config["streaming"].get("engine", "baseline") not in {"baseline", "simulstreaming"}:
+        raise ValueError("streaming.engine must be baseline or simulstreaming")
+    _validate_simulstreaming(config.get("simulstreaming", {}))
     chunk = _bounded_number(config, "streaming", "chunk_seconds", 0.2, 10)
     overlap = _bounded_number(config, "streaming", "chunk_overlap_sec", 0, 5)
     if overlap >= chunk:

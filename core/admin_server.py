@@ -28,6 +28,12 @@ from core.config import (
 )
 from core.profiles import apply_profile, list_profiles
 from core.transcript_archive import TranscriptArchive
+from engines.simulstreaming.availability import (
+    ENGINE_CHOICES,
+    MODEL_CHOICES,
+    engine_overview,
+    engine_status,
+)
 from features.broadcast_report import build_session_report
 from features.summarizer import summarize_captions
 
@@ -83,6 +89,7 @@ class AdminState:
         self.audio_sources: dict[str, dict[str, Any]] = {}
         self.last_segment: dict[str, Any] = {}
         self.last_stt: dict[str, Any] = {}
+        self.engine: dict[str, Any] = {}  # caption engine in use (기본 / 정확 우선) and fallback state
         self.control = AppController()
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +110,7 @@ class AdminState:
             "audio_sources": self.audio_sources,
             "last_segment": self.last_segment,
             "last_stt": self.last_stt,
+            "engine": self.engine,
             "restart_requested": self.control.restart_requested,
             "version": app_info.app_version(),
         }
@@ -193,6 +201,9 @@ class AdminServer:
                 if path == "/api/status":
                     self._send_json(state.to_dict())
                     return
+                if path == "/api/engine":
+                    self._send_json(engine_overview(load_config(), state.engine))
+                    return
                 if path == "/api/devices":
                     result: dict[str, Any] = {
                         "devices": [],
@@ -253,6 +264,43 @@ class AdminServer:
                         archive_config.update(config)
                         analysis_cache.clear()
                     self._send_json(config)
+                    return
+                if path == "/api/engine":
+                    payload = self._read_json()
+                    if not isinstance(payload, dict):
+                        self._send_json({"error": "json object required"}, HTTPStatus.BAD_REQUEST)
+                        return
+                    current = load_config()
+                    engine = str(payload.get("engine", current["streaming"].get("engine", "baseline")))
+                    model = payload.get("model")
+                    if engine not in ENGINE_CHOICES:
+                        self._send_json({"error": "engine must be baseline or simulstreaming"}, HTTPStatus.BAD_REQUEST)
+                        return
+                    if model is not None and model not in MODEL_CHOICES:
+                        self._send_json({"error": "model must be auto, large-v3 or large-v3-turbo"}, HTTPStatus.BAD_REQUEST)
+                        return
+                    patch: dict[str, Any] = {"streaming": {"engine": engine}}
+                    if model is not None:
+                        patch["simulstreaming"] = {"model": model}
+                    config = deep_merge(current, patch)
+                    if engine == "simulstreaming":
+                        status = engine_status(config)
+                        if not status["available"]:
+                            self._send_json(
+                                {"error": status["message"], "reason": status["reason"]},
+                                HTTPStatus.CONFLICT,
+                            )
+                            return
+                    try:
+                        save_config(config)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                        return
+                    with analysis_cache_lock:
+                        archive_config.clear()
+                        archive_config.update(config)
+                        analysis_cache.clear()
+                    self._send_json(engine_overview(config, state.engine))
                     return
                 if path == "/api/reset":
                     current = load_config()

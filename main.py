@@ -4,8 +4,9 @@ import argparse
 import time
 from copy import deepcopy
 from dataclasses import replace
+from typing import Any
 
-from core.audio_capture import AudioSegmentSource
+from core.audio_capture import AudioSegment, AudioSegmentSource
 from core.audio_sources import config_for_audio_source, create_audio_chunk_source
 from core.admin_server import AdminServer, AdminState
 from core.app_info import RELAUNCH_EXIT_CODE
@@ -22,7 +23,6 @@ from core.streaming import PendingWindowScheduler, StreamingAction
 from core.text_processing import split_sentences
 from core.ws_server import CaptionWebSocketServer
 from engines.baseline.engine import BaselineEngine
-from engines.simulstreaming.client import SimulStreamingClient, SimulStreamingError
 from features.defense import DefenseFilter
 from features.slang import SlangDictionary
 
@@ -74,6 +74,10 @@ def run_live(
     config, runtime_warning = prepare_runtime_config(config)
     writer = JsonlLogWriter(config["log"]["dir"])
     admin_state = AdminState()
+    admin_state.engine = baseline_engine_snapshot(
+        config,
+        note="이 실행 방식(기본 모드)에서는 기본 엔진만 씁니다.",
+    )
     monitor = MemoryMonitor(config, writer.session_dir)
     engine = BaselineEngine(config)
     source = AudioSegmentSource(config)
@@ -302,224 +306,46 @@ def run_simulstreaming_experiment(
     enable_admin: bool,
     show_levels: bool,
 ) -> int:
-    """Run the official SimulStreaming server as an isolated experiment.
+    """START_ADVANCED menu AI: v2_light with the 정확 우선 engine for this run only."""
+    runtime_config = deepcopy(config)
+    runtime_config["streaming"]["engine"] = "simulstreaming"
+    return run_v2_light(
+        runtime_config,
+        max_segments,
+        max_seconds,
+        enable_ws,
+        enable_admin,
+        show_levels,
+    )
 
-    Unlike v2_light, the server receives every consecutive audio chunk and owns
-    its own VAC/partial-result state. This keeps the experiment faithful to the
-    upstream streaming protocol while preserving the baseline path unchanged.
+
+def baseline_engine_snapshot(config: dict, *, note: str = "") -> dict:
+    """Admin/status view of the engine when no SimulStreaming route runs."""
+    requested = str(config.get("streaming", {}).get("engine", "baseline") or "baseline")
+    return {
+        "requested_engine": requested,
+        "active_engine": "baseline",
+        "state": "active" if requested == "baseline" else "off",
+        "reason": "" if requested == "baseline" else "unsupported_mode",
+        "model": "",
+        "model_setting": str(config.get("simulstreaming", {}).get("model", "auto")),
+        "notice": note if requested != "baseline" else "",
+    }
+
+
+def create_engine_route(config: dict, source_names: tuple[str, ...], log_dir) -> Any:
+    """The 정확 우선 route for the main source, or None for the 기본 engine.
+
+    SimulStreaming needs one GPU model per audio stream, so in dual input it captions the
+    microphone (the streamer) and PC audio stays on faster-whisper.
     """
-    writer = JsonlLogWriter(config["log"]["dir"])
-    admin_state = AdminState()
-    monitor = MemoryMonitor(config, writer.session_dir)
-    source = create_audio_chunk_source(config)
-    defense = DefenseFilter(config)
-    slang = SlangDictionary(config)
-    client = SimulStreamingClient(config)
-    ws_server = CaptionWebSocketServer(config) if enable_ws else None
-    admin_server = AdminServer(config, admin_state) if enable_admin else None
-    confirmed_count = 0
-    pending_count = 0
-    hidden_count = 0
-    started = time.monotonic()
-    last_partial_text = ""
-    last_partial_end = 0.0
-    stopped_by_user = False
-    exit_code = 0
-    session_archive = SessionArchiveRecorder(
-        config,
-        writer,
-        source=str(getattr(source, "source_name", config["audio"]["source"])),
-        engine=str(client.name),
-        mode="simulstreaming_experiment",
-        analysis_sink=(
-            ws_server.emit_event
-            if ws_server is not None
-            else None
-        ),
-    )
+    if str(config.get("streaming", {}).get("engine", "baseline")) != "simulstreaming":
+        return None
+    from engines.simulstreaming.route import SimulStreamingRoute
 
-    def emit(event: CaptionEvent) -> None:
-        nonlocal pending_count, confirmed_count, hidden_count
-        writer.append_event(event)
-        session_archive.record_event(event)
-        if ws_server is not None:
-            ws_server.emit_event(event)
-        if event.event_type == "caption_pending":
-            pending_count += 1
-            admin_state.pending_caption_count = pending_count
-            print(f"pending: {event.text}")
-        elif event.event_type == "caption_confirmed":
-            confirmed_count += 1
-            admin_state.caption_count = confirmed_count
-            admin_state.last_caption = event.text
-            print(f"caption: {event.text}")
-        elif event.event_type == "caption_hidden":
-            hidden_count += 1
-            admin_state.hidden_caption_count = hidden_count
-            print(
-                "caption_hidden: {text} reason={reason}".format(
-                    text=event.text,
-                    reason=event.metadata.get("defense_reason", ""),
-                )
-            )
-        elif event.event_type == "engine_error":
-            admin_state.last_error = event.text
-            print(f"engine_error: {event.text}")
+    source = "microphone" if "microphone" in source_names else source_names[0]
+    return SimulStreamingRoute(config, source, log_dir=log_dir)
 
-    def emit_confirmed(text: str, end_sec: float, metadata: dict) -> None:
-        if not text:
-            return
-        event = CaptionEvent(
-            event_type="caption_confirmed",
-            text=text,
-            confidence=1.0,
-            audio_offset_sec=end_sec,
-            engine=client.name,
-            metadata=metadata,
-        )
-        for output_event in postprocess_event(event, defense, slang):
-            emit(output_event)
-
-    def handle_server_message(message: dict) -> None:
-        nonlocal last_partial_text, last_partial_end
-        text = str(message.get("text", "")).strip()
-        is_final = bool(message.get("is_final", False))
-        end_sec = float(message.get("end", last_partial_end) or last_partial_end)
-        metadata = {
-            "simulstreaming_start_sec": message.get("start"),
-            "simulstreaming_end_sec": message.get("end"),
-            "simulstreaming_emission_time": message.get("emission_time"),
-            "simulstreaming_is_final": is_final,
-            "simulstreaming_word_count": len(message.get("words", []) or []),
-        }
-        if is_final:
-            emit_confirmed(text or last_partial_text, end_sec or last_partial_end, metadata)
-            last_partial_text = ""
-            last_partial_end = 0.0
-            return
-        if not text:
-            return
-        last_partial_text = text
-        last_partial_end = end_sec
-        partial = CaptionEvent(
-            event_type="caption_confirmed",
-            text=text,
-            confidence=1.0,
-            audio_offset_sec=end_sec,
-            engine=client.name,
-            metadata=metadata,
-        )
-        for output_event in pending_events(partial, defense, slang):
-            emit(output_event)
-
-    if ws_server is not None:
-        ws_server.start_background()
-    if admin_server is not None:
-        admin_server.start_background()
-        print(f"admin page: http://{config['server']['host']}:{config['server']['admin_port']}/admin")
-    try:
-        client.start()
-    except SimulStreamingError as exc:
-        emit(CaptionEvent(event_type="engine_error", text=str(exc), engine=client.name))
-        client.close()
-        session_archive.close({"exit_code": 1, "startup_error": str(exc)})
-        return 1
-
-    print(
-        "Live SimulStreaming experiment. source={source}. Press Ctrl+C to stop.".format(
-            source=getattr(source, "source_name", config["audio"]["source"])
-        )
-    )
-    print("This experimental path uses the official server VAC, not the v2_light STT worker.")
-    try:
-        for chunk in source.chunks(max_seconds=max_seconds):
-            client.send_audio(chunk.samples)
-            info = {
-                "rms": chunk.rms,
-                "threshold": 0.0,
-                "is_voice": False,
-                "offset_sec": chunk.offset_sec,
-                "duration_sec": chunk.duration_sec,
-                "dropped_chunks": source.dropped_chunks,
-                "status": chunk.status,
-                "clip_fraction": chunk.clip_fraction,
-                "input_gain": source.input_gain,
-                "audio_source": getattr(source, "source_name", "microphone"),
-                "source_restarts": int(getattr(source, "restart_count", 0)),
-                "source_last_error": str(getattr(source, "last_error", "")),
-                "device_label": getattr(source, "device_label", ""),
-                "vad_engine": "simulstreaming_vac",
-                "vad_score": 0.0,
-                "discard": None,
-            }
-            admin_state.last_audio = info
-            admin_state.audio_restart_count = info["source_restarts"]
-            admin_state.last_stt = client.snapshot()
-            if show_levels:
-                print(
-                    "\raudio rms={rms:.5f} vad=simulstreaming_vac      ".format(rms=chunk.rms),
-                    end="",
-                    flush=True,
-                )
-            for message in client.get_messages():
-                handle_server_message(message)
-            for error in client.get_errors():
-                admin_state.pipeline_warning = error
-                emit(CaptionEvent(event_type="engine_error", text=error, engine=client.name))
-                exit_code = 1
-                break
-            memory_event = monitor.maybe_sample()
-            if memory_event is not None:
-                writer.append_event(memory_event)
-                admin_state.last_memory = memory_event.metadata
-            if exit_code or (max_segments is not None and confirmed_count >= max_segments):
-                break
-    except KeyboardInterrupt:
-        stopped_by_user = True
-        print("\nStopped.")
-    except Exception as exc:
-        exit_code = 1
-        emit(CaptionEvent(event_type="engine_error", text=str(exc), engine=client.name))
-    finally:
-        for message in client.get_messages(max_items=10_000):
-            handle_server_message(message)
-        final_state = client.snapshot()
-        client.close()
-        writer.append_event(
-            CaptionEvent(
-                event_type="engine_status",
-                text="simulstreaming experiment session summary",
-                engine=client.name,
-                metadata={
-                    **final_state,
-                    "confirmed_captions": confirmed_count,
-                    "pending_captions": pending_count,
-                    "hidden_captions": hidden_count,
-                    "stopped_by_user": stopped_by_user,
-                },
-            )
-        )
-        report_paths = session_archive.close(
-            {
-                "confirmed_captions": confirmed_count,
-                "pending_captions": pending_count,
-                "hidden_captions": hidden_count,
-                "stopped_by_user": stopped_by_user,
-                "exit_code": exit_code,
-            }
-        )
-        if report_paths:
-            print(f"session report: {report_paths['markdown']}")
-    if show_levels:
-        print()
-    print(
-        "summary: mode=simulstreaming_experiment confirmed={confirmed} pending={pending} hidden={hidden}".format(
-            confirmed=confirmed_count,
-            pending=pending_count,
-            hidden=hidden_count,
-        )
-    )
-    return exit_code
 
 def run_v2_light(
     config: dict,
@@ -595,11 +421,33 @@ def run_v2_light(
     pipeline_exit_code = 0
     stopped_by_user = False
     warned_stt_job_id: int | None = None
+    simul_route = create_engine_route(config, source_names, writer.session_dir)
+    if simul_route is None:
+        admin_state.engine = baseline_engine_snapshot(config)
+    else:
+        admin_state.engine = simul_route.snapshot()
+        if simul_route.state == "waiting_standby":
+            # Load the faster-whisper model now: it captions while SimulStreaming loads and
+            # takes over at once if SimulStreaming fails later. The result is not shown.
+            import numpy as np
+
+            standby_rate = int(source_configs[simul_route.source_name]["audio"]["sample_rate"])
+            stt_worker.submit(
+                "confirmed",
+                np.zeros(standby_rate // 2, dtype=np.float32),
+                standby_rate,
+                0.0,
+                metadata={"standby_warmup": True, "audio_source": simul_route.source_name},
+            )
     session_archive = SessionArchiveRecorder(
         config,
         writer,
         source=source_mode,
-        engine=str(getattr(engine, "name", "baseline")),
+        engine=(
+            "simulstreaming"
+            if simul_route is not None and simul_route.state != "off"
+            else str(getattr(engine, "name", "baseline"))
+        ),
         mode="v2_light",
         analysis_sink=(
             ws_server.emit_event
@@ -666,6 +514,10 @@ def run_v2_light(
         )
     def emit_worker_result(result: SttResult) -> None:
         nonlocal warned_stt_job_id
+        if result.job.metadata.get("standby_warmup"):
+            if simul_route is not None:
+                simul_route.standby_ready()
+            return
         snapshot = stt_worker.snapshot()
         admin_state.last_stt = {
             **snapshot,
@@ -807,6 +659,36 @@ def run_v2_light(
             "source_priority": source_priority,
         }
 
+    def submit_confirmed_segment(
+        segment: AudioSegment,
+        segment_source: str,
+        segment_scheduler: PendingWindowScheduler,
+        extra_metadata: dict | None = None,
+    ) -> None:
+        sample_rate = int(source_configs[segment_source]["audio"]["sample_rate"])
+        stt_worker.submit(
+            "confirmed",
+            segment.samples,
+            sample_rate,
+            segment.start_offset_sec,
+            metadata={
+                **event_source_metadata(segment_source),
+                "segment_duration_sec": segment.duration_sec,
+                "segment_peak_rms": segment.peak_rms,
+                "segment_voice_ratio": segment.voice_ratio,
+                "segment_start_offset_sec": segment.start_offset_sec,
+                "segment_end_offset_sec": segment.end_offset_sec,
+                "segment_start_sample": int(
+                    round(segment.start_offset_sec * sample_rate)
+                ),
+                "segment_end_sample": int(
+                    round(segment.end_offset_sec * sample_rate)
+                ),
+                "capture_ring_end_sample": segment_scheduler.ring.end_sample,
+                **(extra_metadata or {}),
+            },
+        )
+
     def handle_action(
         action: StreamingAction,
         action_source: str,
@@ -814,11 +696,14 @@ def run_v2_light(
     ) -> None:
         nonlocal discarded, processed
         source_metadata = event_source_metadata(action_source)
+        routed = simul_route is not None and action_source == simul_route.source_name
         if action.action_type == "discarded_segment":
             discarded += 1
             admin_state.discarded_segment_count = discarded
             return
         if action.action_type == "pending_window" and action.window is not None:
+            if routed and simul_route.owns_captions:
+                return  # SimulStreaming shows this source's words itself
             streaming = source_configs[action_source]["streaming"]
             if not bool(streaming.get("pending_enabled", True)):
                 return
@@ -867,28 +752,70 @@ def run_v2_light(
                     rms=action.segment.peak_rms,
                 )
             )
-            sample_rate = int(source_configs[action_source]["audio"]["sample_rate"])
-            stt_worker.submit(
-                "confirmed",
-                action.segment.samples,
-                sample_rate,
-                action.segment.start_offset_sec,
-                metadata={
-                    **source_metadata,
-                    "segment_duration_sec": action.segment.duration_sec,
-                    "segment_peak_rms": action.segment.peak_rms,
-                    "segment_voice_ratio": action.segment.voice_ratio,
-                    "segment_start_offset_sec": action.segment.start_offset_sec,
-                    "segment_end_offset_sec": action.segment.end_offset_sec,
-                    "segment_start_sample": int(
-                        round(action.segment.start_offset_sec * sample_rate)
-                    ),
-                    "segment_end_sample": int(
-                        round(action.segment.end_offset_sec * sample_rate)
-                    ),
-                    "capture_ring_end_sample": action_scheduler.ring.end_sample,
-                },
+            segment: AudioSegment | None = action.segment
+            if routed:
+                if simul_route.claims(action.segment):
+                    # Kept until SimulStreaming has captioned past it; replayed on a fallback.
+                    simul_route.hold_segment(action.segment)
+                    return
+                segment = simul_route.trim_segment(action.segment)
+                if segment is None:
+                    return
+            submit_confirmed_segment(segment, action_source, action_scheduler)
+
+    def handle_route_output(output: Any) -> None:
+        if simul_route is None:
+            return
+        route_source = simul_route.source_name
+        if output.kind == "caption" and output.event is not None:
+            event = replace(
+                output.event,
+                metadata={**output.event.metadata, **event_source_metadata(route_source)},
             )
+            converted = (
+                pending_events(event, defense, slang)
+                if output.pending
+                else postprocess_event(event, defense, slang)
+            )
+            for output_event in converted:
+                emit_caption(
+                    output_event,
+                    extra=None if output.pending else {"raw_text": event.text, "caption_engine": "simulstreaming"},
+                )
+            return
+        if output.kind == "status":
+            status = dict(output.status)
+            writer.append_event(
+                CaptionEvent(
+                    event_type="engine_status",
+                    text=output.text,
+                    engine="simulstreaming",
+                    metadata=status,
+                )
+            )
+            print()
+            print(
+                "caption engine: {state}{reason}{model}".format(
+                    state=status.get("state", ""),
+                    reason=f" reason={status['reason']}" if status.get("reason") else "",
+                    model=f" model={status['model']}" if status.get("model") else "",
+                )
+            )
+            if status.get("state") in {"fallback", "off"} and status.get("reason"):
+                admin_state.pipeline_warning = simul_route.notice()
+            elif status.get("state") == "active" and admin_state.pipeline_warning == simul_route.notice():
+                admin_state.pipeline_warning = ""
+            return
+        if output.kind == "replay":
+            for replay_segment in output.segments:
+                submit_confirmed_segment(
+                    replay_segment,
+                    route_source,
+                    schedulers[route_source],
+                    {"replayed_after_fallback": True},
+                )
+            print(f"caption engine: {len(output.segments)} segment(s) handed back to faster-whisper")
+
     try:
         for chunk in source.chunks(max_seconds=max_seconds):
             if admin_state.control.restart_requested:
@@ -953,8 +880,34 @@ def run_v2_light(
                     admin_state.audio_sources[chunk_source] = info
                     print_level(info)
                 handle_action(action, chunk_source, scheduler)
+            if simul_route is not None and chunk_source == simul_route.source_name:
+                # Switch engines only in a pause: no segment open and no final job queued, so
+                # one sentence is never split between them and offsets stay in order.
+                worker_state = stt_worker.snapshot()
+                fw_busy = (
+                    worker_state.get("active_job_type") == "confirmed"
+                    or int(worker_state.get("confirmed_queue", 0) or 0) > 0
+                )
+                try:
+                    simul_route.feed(
+                        chunk,
+                        can_switch=not actions and not scheduler.segmenter.in_segment and not fw_busy,
+                    )
+                except Exception as exc:  # never let the optional engine stop captions
+                    print(f"\nwarning: caption engine error: {type(exc).__name__}: {exc}")
+                    for route_output in simul_route.fail_internal(exc):
+                        handle_route_output(route_output)
             for result in stt_worker.get_results():
                 emit_worker_result(result)
+            if simul_route is not None:
+                try:
+                    route_outputs = simul_route.poll()
+                except Exception as exc:
+                    print(f"\nwarning: caption engine error: {type(exc).__name__}: {exc}")
+                    route_outputs = simul_route.fail_internal(exc)
+                for route_output in route_outputs:
+                    handle_route_output(route_output)
+                admin_state.engine = simul_route.snapshot()
 
             snapshot = stt_worker.snapshot()
             admin_state.last_stt = {
@@ -1157,10 +1110,21 @@ def run_v2_light(
             )
         )
 
-    if not stopped_by_user and pipeline_exit_code == 0:
+    graceful_end = not stopped_by_user and pipeline_exit_code == 0
+    if graceful_end:
         for flush_source, flush_scheduler in schedulers.items():
             for action in flush_scheduler.flush():
                 handle_action(action, flush_source, flush_scheduler)
+    if simul_route is not None:
+        # Before the faster-whisper drain: a fallback here can still hand segments back.
+        try:
+            for route_output in simul_route.finish(graceful=graceful_end):
+                handle_route_output(route_output)
+        except Exception as exc:  # the captions already shown matter more than the last line
+            print(f"warning: caption engine shutdown failed: {type(exc).__name__}: {exc}")
+        simul_route.close()
+        admin_state.engine = simul_route.snapshot()
+    if graceful_end:
         drain_timeout = max(
             float(
                 config["streaming"].get(
@@ -1211,6 +1175,7 @@ def run_v2_light(
                     else {}
                 ),
                 "pipeline_exit_code": pipeline_exit_code,
+                "caption_engine": admin_state.engine,
             },
         )
     )

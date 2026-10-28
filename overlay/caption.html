@@ -59,6 +59,10 @@
     .line.pending {
       color: var(--pending);
     }
+    /* 정확 우선 engine: words that are never revised, shown as they arrive */
+    .line.pending.stable {
+      color: var(--text);
+    }
     .source-label {
       display: inline-block;
       margin-right: 0.35em;
@@ -113,6 +117,10 @@
     let pendingText = "";
     let pendingSource = "";
     let pendingSourceLabel = "";
+    // A stable pending line (metadata.stable) only grows and is committed as-is, so it stays
+    // until its confirmed line is on screen instead of disappearing first.
+    let pendingStable = false;
+    let pendingOffset = -1;
     let lastPendingKey = "";
     let lastPendingOffsets = { microphone: -1, system: -1 };
     let lastConfirmedOffsets = { microphone: -1, system: -1 };
@@ -294,7 +302,8 @@
 
     function renderPending() {
       pendingCaption.innerHTML = pendingText
-        ? '<div class="line pending source-' + escapeHtml(pendingSource) + '">'
+        ? '<div class="line pending' + (pendingStable ? " stable" : "")
+          + ' source-' + escapeHtml(pendingSource) + '">'
           + sourceLabelHtml(pendingSource, pendingSourceLabel)
           + escapeHtml(pendingText)
           + "</div>"
@@ -312,12 +321,16 @@
       clearTimeout(pendingTimer);
 
       if (pendingText) {
+        const staleMs = pendingStable
+          ? Math.max(pendingStaleMs, confirmedHoldMs)
+          : pendingStaleMs;
         const remaining = Math.max(
           0,
-          pendingStaleMs - (Date.now() - lastPendingAt)
+          staleMs - (Date.now() - lastPendingAt)
         );
         pendingTimer = setTimeout(() => {
           pendingText = "";
+          pendingStable = false;
           renderPending();
         }, remaining);
       }
@@ -329,7 +342,7 @@
         );
         hideTimer = setTimeout(() => {
           if (justChattingMode) return;
-          pendingText = "";
+          if (!pendingStable) pendingText = "";
           confirmedHistory = [];
           seenConfirmedKeys.clear();
           seenConfirmedContentKeys.clear();
@@ -355,9 +368,17 @@
     }
 
     function commitConfirmedBatch(entries) {
+      let replacesStablePending = false;
       entries.forEach((entry) => {
         queuedConfirmedKeys.delete(entry.key);
         queuedConfirmedContentKeys.delete(entry.contentKey);
+        if (
+          pendingStable
+          && entry.source === pendingSource
+          && entry.offset >= pendingOffset
+        ) {
+          replacesStablePending = true;
+        }
         if (
           seenConfirmedKeys.has(entry.key)
           || seenConfirmedContentKeys.has(entry.contentKey)
@@ -369,6 +390,15 @@
       trimConfirmedHistory();
       lastConfirmedAt = Date.now();
       lastConfirmedCommitAt = lastConfirmedAt;
+      if (replacesStablePending) {
+        // Same render: the growing line becomes the confirmed line without a blank frame.
+        pendingText = "";
+        pendingSource = "";
+        pendingSourceLabel = "";
+        pendingStable = false;
+        lastPendingKey = "";
+        renderPending();
+      }
       renderConfirmed();
       scheduleTimers();
     }
@@ -441,7 +471,7 @@
         return;
       }
 
-      if (pendingSource === source) {
+      if (pendingSource === source && !pendingStable) {
         pendingText = "";
         pendingSource = "";
         pendingSourceLabel = "";
@@ -493,6 +523,8 @@
         lastPendingOffsets[source] = offset;
         pendingText = text;
         pendingSource = source;
+        pendingStable = Boolean(message.metadata?.stable);
+        pendingOffset = offset;
         pendingSourceLabel = String(
           message.metadata?.source_label || sourceLabels[source] || source
         );

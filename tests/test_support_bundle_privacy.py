@@ -29,7 +29,9 @@ from core.monitoring import MemoryMonitor  # noqa: E402
 from core.recovery import ConfirmedRangeLedger  # noqa: E402
 from core.session_archive import SessionArchiveRecorder  # noqa: E402
 from core.stt_worker import SttWorker  # noqa: E402
+from core.audio_capture import AudioChunk  # noqa: E402
 from engines.baseline.engine import BaselineEngine  # noqa: E402
+from engines.simulstreaming.route import SimulStreamingRoute  # noqa: E402
 from features.defense import DefenseFilter  # noqa: E402
 from features.slang import SlangDictionary  # noqa: E402
 from features.summarizer import tokenize  # noqa: E402
@@ -66,6 +68,77 @@ LINES = [
 ]
 
 
+# 정확 우선 (SimulStreaming) increments, as the server sends them: append-only words, then is_final.
+SIMUL_MESSAGES = [
+    {"text": f" {WORDS[0]}", "end": 1.0, "is_final": False, "words": [{"text": f" {WORDS[0]}", "end": 1.0}]},
+    {"text": f" {WORDS[1]}.", "end": 1.6, "is_final": False, "words": [{"text": f" {WORDS[1]}.", "end": 1.6}]},
+    {"text": f" {WORDS[2]}", "end": 2.2, "is_final": False, "words": [{"text": f" {WORDS[2]}", "end": 2.2}]},
+    {"is_final": True, "end": 2.6},
+]
+SIMUL_CONFIRMED = 2  # "<w0> <w1>." at the sentence end and "<w2>" at is_final
+
+
+class ScriptedSimulClient:
+    """The route's view of a SimulStreaming server: connects, sends SIMUL_MESSAGES, then dies."""
+
+    def __init__(self) -> None:
+        self.connected = False
+        self.audio_fed = 0
+        self._sent = False
+
+    def launch(self) -> None:
+        self.connected = True
+
+    def send_audio(self, samples: Any) -> None:
+        self.audio_fed += len(samples)
+
+    def get_messages(self, max_items: int = 100) -> list[dict[str, Any]]:
+        if self.audio_fed and not self._sent:
+            self._sent = True
+            return [dict(message) for message in SIMUL_MESSAGES]
+        return []
+
+    def failure(self) -> str:
+        return "crashed" if self._sent else ""
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"lag_sec": 0.4, "heartbeat_age_sec": 0.2, "server_pid": 4242, "server_max_iter_sec": 0.9}
+
+    def kill(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.connected = False
+
+
+def record_simulstreaming(config: dict[str, Any], defense: DefenseFilter, slang: SlangDictionary,
+                          emit: Any, writer: JsonlLogWriter) -> SimulStreamingRoute:
+    """main.run_v2_light's handle_route_output for a real route on a scripted server."""
+    import numpy as np
+
+    route = SimulStreamingRoute(config, "microphone", client_factory=lambda cfg, **kwargs: ScriptedSimulClient(),
+                                status_provider=lambda cfg: {"available": True, "reason": ""}, gpu_probe=lambda: None)
+    route_metadata = {"audio_source": "microphone", "audio_mode": "both", "source_label": MIC_LABEL, "source_priority": 0}
+    route.standby_ready()
+    outputs = route.poll() + route.poll()  # starting, ready
+    route.feed(AudioChunk(samples=np.zeros(1024, dtype=np.float32), rms=0.0, offset_sec=30.0, duration_sec=0.064,
+                          source_name="microphone"), can_switch=True)
+    outputs += route.poll()  # active, captions, then the crash -> off (max_restarts 0)
+    for output in outputs:
+        if output.kind == "status":
+            writer.append_event(CaptionEvent(event_type="engine_status", text=output.text, engine="simulstreaming",
+                                             metadata=dict(output.status)))
+        elif output.kind == "caption":
+            event = CaptionEvent(event_type=output.event.event_type, text=output.event.text,
+                                 confidence=output.event.confidence, audio_offset_sec=output.event.audio_offset_sec,
+                                 engine=output.event.engine, metadata={**output.event.metadata, **route_metadata})
+            converted = pending_events(event, defense, slang) if output.pending else postprocess_event(event, defense, slang)
+            for out in converted:
+                emit(out, extra=None if output.pending else {"raw_text": event.text, "caption_engine": "simulstreaming"})
+    assert route.state == "off" and route.reason == "crashed", route.snapshot()
+    return route
+
+
 def pipeline_config(tmp: Path) -> dict[str, Any]:
     config = copy.deepcopy(DEFAULTS)
     config["audio"]["source"] = "both"
@@ -80,6 +153,11 @@ def pipeline_config(tmp: Path) -> dict[str, Any]:
     config["archive"]["db_path"] = str(tmp / "transcripts.sqlite3")
     config["archive"]["recap"]["provider"] = "extractive"  # never hand test captions to a local LLM or CLI
     config["log"]["dir"] = str(tmp / "logs")
+    (tmp / "models").mkdir(exist_ok=True)
+    (tmp / "models" / "large-v3.pt").write_bytes(b"x")
+    config["simulstreaming"]["model_dir"] = str(tmp / "models")
+    config["simulstreaming"]["max_restarts"] = 0
+    config["streaming"]["engine"] = "simulstreaming"
     return config
 
 
@@ -151,6 +229,7 @@ def record_session(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
                            audio_offset_sec=22.0, engine="baseline", metadata={"audio_source": "microphone"})
     for event in postprocess_event(failure, defense, slang):
         emit(event)
+    route = record_simulstreaming(config, defense, slang, emit, writer)
 
     store = recorder.store
     assert store is not None, recorder.last_error
@@ -188,6 +267,7 @@ def record_session(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
                           "source_priority": 0, "duration_sec": 2.5, "peak_rms": 0.21, "voice_ratio": 0.82}
     state.last_stt = {**SttWorker(engine).snapshot(), **ledger.snapshot(), "job_id": job_id, "job_type": "confirmed",
                       "elapsed_sec": 0.42, "event_count": 1, "text": STATUS_TEXT}
+    state.engine = route.snapshot()
     return writer.session_dir, state.to_dict()
 
 
@@ -318,7 +398,22 @@ def check_bundle(result: dict[str, Any], members: dict[str, str], session_dir: P
     assert members[session + "memory.csv"] == (session_dir / "memory.csv").read_text(encoding="utf-8")
     report = json.loads(members[session + "broadcast_report.json"])
     assert report["summaries"][0]["headline"].startswith("[redacted") and report["keywords"][0]["term"].startswith("[redacted")
-    assert report["stats"]["caption_count"] == len(LINES), report["stats"]
+    assert report["stats"]["caption_count"] == len(LINES) + SIMUL_CONFIRMED, report["stats"]
+    # 정확 우선 engine rows: words redacted, engine state and fallback reason kept.
+    simul_raw = [row for row in raw if row["engine"] == "simulstreaming"]
+    simul = [row for row in shipped if row["engine"] == "simulstreaming"]
+    assert len(simul) == len(simul_raw) and simul, (len(simul), len(simul_raw))
+    simul_captions = [row for row in simul if row["event_type"] in {"caption_pending", "caption_confirmed"}]
+    assert len([row for row in simul_captions if row["event_type"] == "caption_confirmed"]) == SIMUL_CONFIRMED
+    assert all(row["text"].startswith("[redacted") for row in simul_captions), simul_captions
+    assert all(row["metadata"]["stable"] is True for row in simul_captions if row["event_type"] == "caption_pending")
+    statuses = [(row["metadata"]["state"], row["metadata"]["reason"], row["metadata"]["active_engine"])
+                for row in simul if row["event_type"] == "engine_status"]
+    assert ("active", "", "simulstreaming") in statuses and ("off", "crashed", "baseline") in statuses, statuses
+    confirmed_simul = next(row for row in simul_captions if row["event_type"] == "caption_confirmed")
+    assert confirmed_simul["extra"]["caption_engine"] == "simulstreaming", confirmed_simul["extra"]
+    assert confirmed_simul["extra"]["raw_text"].startswith("[redacted"), confirmed_simul["extra"]
+    assert confirmed_simul["metadata"]["engine_model"] == "large-v3", confirmed_simul["metadata"]
     validation = json.loads(members[session + "validation_report.json"])
     assert validation["annotations"][0]["caption_text"].startswith("[redacted") and validation["annotations"][0]["kind"] == "wrong_word"
     assert validation["verdict"] in {"PASS", "WARN", "REVIEW", "FAIL"} and validation["checks"][0]["name"] == "jsonl_parse"
@@ -330,6 +425,8 @@ def check_bundle(result: dict[str, Any], members: dict[str, str], session_dir: P
     assert state["last_segment"]["source_label"] == f"[redacted {len(MIC_LABEL)} chars]", state["last_segment"]
     assert state["last_audio"]["device_label"] == DEVICE, "device names help and are not speech"
     assert state["last_memory"]["path"].startswith("%USERPROFILE%"), state["last_memory"]
+    assert (state["engine"]["state"], state["engine"]["reason"], state["engine"]["requested_engine"]) == (
+        "off", "crashed", "simulstreaming"), state["engine"]
     assert state["last_memory"]["rss_mb"] == status["last_memory"]["rss_mb"]
     assert state["last_error"].startswith("RuntimeError: cannot read %USERPROFILE%"), state["last_error"]
     assert members["note.txt"] == NOTE + "\n", "the user's own note is kept"

@@ -102,6 +102,11 @@ class EnergyVadSegmenter:
     def push(self, chunk: AudioChunk) -> AudioSegment | None:
         return self._push_with_voice(chunk, chunk.rms >= self.threshold)
 
+    @property
+    def in_segment(self) -> bool:
+        """True while a voiced segment is open (it ends after silence_duration_sec)."""
+        return self._segment_start is not None
+
     def _push_with_voice(self, chunk: AudioChunk, is_voice: bool) -> AudioSegment | None:
         if self._segment_start is None:
             if not is_voice:

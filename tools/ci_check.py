@@ -19,6 +19,8 @@ CI_TESTS = [
     "tests/test_recap.py",
     "tests/test_app_control.py",
     "tests/test_support_bundle_privacy.py",
+    "tests/test_admin_engine_api.py",
+    "tests/test_simulstreaming_engine.py",
     "tests/test_user_data_paths.py",
     "tests/test_updater_cache.py",
     "tests/test_updater_no_release.py",

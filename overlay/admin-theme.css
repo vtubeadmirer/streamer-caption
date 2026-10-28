@@ -1167,3 +1167,42 @@ body.lang-en .en-text {
     min-width: 680px;
   }
 }
+/* 자막 엔진 (기본 / 정확 우선) in the status card */
+.engine-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.engine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.engine-panel .help,
+.engine-panel .hint {
+  margin: 8px 0 0;
+}
+
+.engine-panel .notice {
+  margin-top: 10px;
+}
+
+.engine-panel .row {
+  margin-top: 10px;
+}
+
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* label and .row set display, which would otherwise override the hidden attribute */
+.engine-panel [hidden] {
+  display: none !important;
+}
