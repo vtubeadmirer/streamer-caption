@@ -18,6 +18,7 @@ on:
     paths:
       - "requirements.txt"
       - "tools/build_runtime.py"
+      - ".github/workflows/runtime.yml"
 
 permissions:
   contents: write
