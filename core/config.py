@@ -152,7 +152,10 @@ DEFAULTS: dict[str, Any] = {
         "enabled": False,  # unused since streaming.engine selects the engine; kept for old configs
         "repo_dir": "experiments/vendor/SimulStreaming",
         "python_executable": "",  # "" = the optional runtime (see engines/simulstreaming/availability.py)
-        "model": "auto",  # auto | large-v3 | large-v3-turbo (auto: large-v3 when the GPU has room)
+        # large-v3-turbo (default: 1.3 s, CER 1.0%, ~5.3 GB) or large-v3 (advanced: CER 0.7% but
+        # ~10 GB and spikes higher, too tight beside OBS or a game; turbo is used if it does not fit).
+        # The .pt file names must stay exact: alignment heads are chosen by file name.
+        "model": "large-v3-turbo",
         "model_dir": "",  # "" = <runtime>/models
         "model_path": "",  # an explicit .pt file overrides model/model_dir
         "allow_auto_download": False,  # the server never downloads a missing model
@@ -428,6 +431,10 @@ def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
                     simul[key] = new
             if simul.get("port") == 43007 and simul.get("start_server", True):
                 simul["port"] = 0
+    simul = config.get("simulstreaming")
+    if isinstance(simul, dict) and simul.get("model") == "auto":
+        # Development builds briefly stored "auto"; turbo is the default it meant on most PCs.
+        simul["model"] = DEFAULTS["simulstreaming"]["model"]
     config["config_schema"] = CONFIG_SCHEMA
     return config
 
@@ -453,8 +460,8 @@ def _bounded_number(
 def _validate_simulstreaming(simul: Any) -> None:
     if not isinstance(simul, dict):
         raise TypeError("simulstreaming must be an object")
-    if simul.get("model", "auto") not in {"auto", "large-v3", "large-v3-turbo"}:
-        raise ValueError("simulstreaming.model must be auto, large-v3 or large-v3-turbo")
+    if simul.get("model", "large-v3-turbo") not in {"large-v3", "large-v3-turbo"}:
+        raise ValueError("simulstreaming.model must be large-v3-turbo or large-v3")
     for key, low, high, integer in (
         ("min_chunk_size", 0.1, 5, False),
         ("vac_chunk_size", 0.02, 1, False),

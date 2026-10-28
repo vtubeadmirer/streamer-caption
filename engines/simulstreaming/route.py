@@ -99,7 +99,7 @@ class SimulStreamingRoute:
         self.source_name = source_name
         settings = config.get("simulstreaming", {}) or {}
         self.sample_rate = int(config.get("audio", {}).get("sample_rate", 16000))
-        self.model_setting = str(settings.get("model", "auto") or "auto")
+        self.model_setting = str(settings.get("model", "large-v3-turbo") or "large-v3-turbo")
         self.max_restarts = max(0, int(settings.get("max_restarts", 2)))
         self.retry_delay_sec = max(1.0, float(settings.get("retry_delay_sec", 30.0)))
         self.standby_timeout_sec = max(0.0, float(settings.get("standby_timeout_sec", 90.0)))
@@ -346,8 +346,8 @@ class SimulStreamingRoute:
         self.reason = reason
         self.fallbacks += 1 if was_active or self.state in {"starting", "ready"} else 0
         retryable = reason not in NON_RETRYABLE
-        if reason == "out_of_memory" and self.model and self.model_setting == "auto":
-            # "auto" means "what fits": try the lighter model before giving up.
+        if reason == "out_of_memory" and self.model == "large-v3":
+            # The advanced model did not fit after all: continue with turbo rather than without.
             self._out_of_memory_models.add(self.model)
             runtime = resolve_runtime(self.config)
             retryable = any(name not in self._out_of_memory_models for name in runtime["model_files"])

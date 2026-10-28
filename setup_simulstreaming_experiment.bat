@@ -2,9 +2,9 @@
 setlocal
 cd /d "%~dp0"
 
-echo SimulStreaming experimental setup
-echo This installs a separate CUDA PyTorch runtime and downloads large-v3.
-echo Expect several GB of downloads and disk use.
+echo SimulStreaming (accuracy-first engine) developer setup
+echo This installs a separate CUDA PyTorch runtime and downloads large-v3-turbo.
+echo Expect about 4 GB of downloads and 7 GB of disk use.
 echo.
 
 set "PYTHON_CMD="
@@ -23,9 +23,12 @@ if not defined PYTHON_CMD (
   exit /b 1
 )
 
-set "RUNTIME=experiments\simulstreaming-runtime\.venv"
-set "MODEL_DIR=%CD%\experiments\simulstreaming-runtime\models"
+set "RUNTIME_ROOT=%CD%\experiments\simulstreaming-runtime"
+set "RUNTIME=%RUNTIME_ROOT%\.venv"
+set "MODEL_DIR=%RUNTIME_ROOT%\models"
 set "REPO_DIR=%CD%\experiments\vendor\SimulStreaming"
+rem The app points TORCH_HOME here too, so nothing is looked up online at run time.
+set "TORCH_HOME=%RUNTIME_ROOT%\torch_home"
 
 if not exist "%RUNTIME%\Scripts\python.exe" (
   echo [1/5] Creating isolated Python environment...
@@ -45,22 +48,28 @@ echo [3/5] Verifying CUDA...
 "%RUNTIME%\Scripts\python.exe" -c "import torch; assert torch.cuda.is_available(), 'CUDA is not available'; print(torch.__version__, torch.cuda.get_device_name(0))"
 if errorlevel 1 exit /b %errorlevel%
 
-echo [4/5] Preparing Silero VAC cache...
-"%RUNTIME%\Scripts\python.exe" -c "import torch; torch.hub.load('snakers4/silero-vad','silero_vad',trust_repo=True); print('Silero VAC ready')"
-if errorlevel 1 exit /b %errorlevel%
-
-echo [5/5] Downloading Whisper large-v3 model if needed...
-if not exist "%MODEL_DIR%\large-v3.pt" mkdir "%MODEL_DIR%"
-if not exist "%MODEL_DIR%\large-v3.pt" (
-  set "SIMUL_REPO=%REPO_DIR%"
+if not exist "%MODEL_DIR%" mkdir "%MODEL_DIR%"
+echo [4/5] Preparing the Silero VAD model for the VAC...
+if not exist "%MODEL_DIR%\silero_vad.jit" (
   set "SIMUL_MODELS=%MODEL_DIR%"
-  "%RUNTIME%\Scripts\python.exe" -c "import os,sys; sys.path.insert(0,os.environ['SIMUL_REPO']); from simulstreaming.whisper.simul_whisper.whisper import _MODELS,_download; print(_download(_MODELS['large-v3'],os.environ['SIMUL_MODELS'],False))"
+  "%RUNTIME%\Scripts\python.exe" -c "import os,pathlib,shutil,torch; torch.hub.load('snakers4/silero-vad','silero_vad',trust_repo=True); src=next(pathlib.Path(torch.hub.get_dir()).glob('snakers4_silero-vad_*/src/silero_vad/data/silero_vad.jit')); shutil.copy(src, os.environ['SIMUL_MODELS']); print('Silero VAD ready')"
   if errorlevel 1 exit /b %errorlevel%
 ) else (
-  echo large-v3 model already exists.
+  echo Silero VAD model already exists.
+)
+
+echo [5/5] Downloading the Whisper large-v3-turbo model if needed...
+rem Keep the file name: SimulStreaming chooses its alignment heads by it.
+if not exist "%MODEL_DIR%\large-v3-turbo.pt" (
+  set "SIMUL_REPO=%REPO_DIR%"
+  set "SIMUL_MODELS=%MODEL_DIR%"
+  "%RUNTIME%\Scripts\python.exe" -c "import os,sys; sys.path.insert(0,os.environ['SIMUL_REPO']); from simulstreaming.whisper.simul_whisper.whisper import _MODELS,_download; print(_download(_MODELS['large-v3-turbo'],os.environ['SIMUL_MODELS'],False))"
+  if errorlevel 1 exit /b %errorlevel%
+) else (
+  echo large-v3-turbo model already exists.
 )
 
 echo.
-echo SimulStreaming experiment setup complete.
-echo Run START_HERE.bat and choose AJ, then AI.
+echo Setup complete. In the admin page choose the caption engine "accuracy first",
+echo or run START_HERE.bat and choose AJ (check), then AI (run once).
 pause

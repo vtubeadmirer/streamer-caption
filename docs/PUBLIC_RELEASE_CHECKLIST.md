@@ -46,6 +46,13 @@ Stable release
 - Install the public ZIP on a second machine and verify the first-run workflow.
 - Confirm the normal launcher detects future stable versions no more than once per configured interval.
 
+정확 우선 engine (SimulStreaming) — before the release that offers its download (phase 3)
+
+- Add the Apache-2.0 text and an attribution/modification note for `experiments/vendor/SimulStreaming/simulstreaming/whisper/simul_whisper/` (derived from backspacetg/simul_whisper, Apache-2.0); see `THIRD_PARTY_NOTICES.md`.
+- Ship the optional runtime with the `silero-vad` package so the VAC never contacts GitHub; fold its wheel licenses into `licenses.txt`.
+- Confirm a privacy bug bundle from a session that used and fell back from the engine contains no `.log` file and no caption text (`tests/test_support_bundle_privacy.py`).
+- Run 30 minutes of live microphone captions on an RTX 4060 Ti 16GB with the engine, kill its server once and confirm the 기본 engine continues within seconds.
+
 Deferred hardening
 
 - Sign the Windows installer or launcher to reduce SmartScreen warnings.

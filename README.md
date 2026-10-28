@@ -605,6 +605,15 @@ back with `apply_4060ti_profile.bat`. For segmentation quality, the Silero VAD
 (`vad.engine: "silero"`, set by the auto GPU preset) is recommended over the
 energy VAD.
 
+## 정확 우선 engine (SimulStreaming) — in development
+
+The admin page's **자막 엔진** choice adds **정확 우선**: captions about 1.3 seconds later
+whose words never change once shown (lab, large-v3-turbo: 1.0% CER, no phantom captions),
+falling back to the default faster-whisper engine automatically on a crash, stall, lag or full
+GPU. It needs an optional CUDA PyTorch runtime and the Whisper `large-v3-turbo.pt` model that
+releases do not download yet; without them the option is shown disabled. Design, lab numbers,
+fallback rules and the remaining download work: `docs/simulstreaming.md`.
+
 ## Release installer and automatic updates
 
 The versioned release workflow is documented in `docs/RELEASE_AND_UPDATE_ARCHITECTURE.md`.

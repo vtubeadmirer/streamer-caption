@@ -328,7 +328,7 @@ def baseline_engine_snapshot(config: dict, *, note: str = "") -> dict:
         "state": "active" if requested == "baseline" else "off",
         "reason": "" if requested == "baseline" else "unsupported_mode",
         "model": "",
-        "model_setting": str(config.get("simulstreaming", {}).get("model", "auto")),
+        "model_setting": str(config.get("simulstreaming", {}).get("model", "large-v3-turbo")),
         "notice": note if requested != "baseline" else "",
     }
 
@@ -773,9 +773,9 @@ def run_v2_light(
                 metadata={**output.event.metadata, **event_source_metadata(route_source)},
             )
             converted = (
-                pending_events(event, defense, slang)
+                pending_events(event, defense, slang, min_chars=1, allow_single_char=True)
                 if output.pending
-                else postprocess_event(event, defense, slang)
+                else postprocess_event(event, defense, slang, allow_single_char=True)
             )
             for output_event in converted:
                 emit_caption(
@@ -1251,6 +1251,8 @@ def postprocess_event(
     event: CaptionEvent,
     defense: DefenseFilter,
     slang: SlangDictionary,
+    *,
+    allow_single_char: bool = False,
 ) -> list[CaptionEvent]:
     if event.event_type != "caption_confirmed":
         return [event]
@@ -1260,6 +1262,7 @@ def postprocess_event(
         corrected,
         event.confidence,
         {**event.metadata, "audio_offset_sec": event.audio_offset_sec},
+        allow_single_char=allow_single_char,
     )
     defense_metadata = {
         "defense_reason": defense_result.reason,
@@ -1305,7 +1308,12 @@ def pending_events(
     event: CaptionEvent,
     defense: DefenseFilter,
     slang: SlangDictionary,
+    *,
+    min_chars: int | None = None,
+    allow_single_char: bool = False,
 ) -> list[CaptionEvent]:
+    """min_chars / allow_single_char: the 정확 우선 engine's growing line is never revised,
+    so a one-syllable start ("네") is shown instead of waiting for the next word."""
     if event.event_type == "engine_error":
         return [event]
     if event.event_type != "caption_confirmed":
@@ -1317,10 +1325,12 @@ def pending_events(
         event.confidence,
         {**event.metadata, "audio_offset_sec": event.audio_offset_sec},
         remember=False,
+        allow_single_char=allow_single_char,
     )
     if not defense_result.visible:
         return []
-    min_chars = int(defense.config.get("streaming", {}).get("pending_min_chars", 2))
+    if min_chars is None:
+        min_chars = int(defense.config.get("streaming", {}).get("pending_min_chars", 2))
     if len(defense_result.text.strip()) < min_chars:
         return []
     return [

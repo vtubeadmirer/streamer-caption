@@ -13,8 +13,11 @@ fixes found in the 2026-10 lab runs are applied here at import time instead:
 * runaway/duplicate guard for the greedy decoder: a repetition loop (" . . . .") ran for
   over 50 s in the end-of-utterance flush and stalled the stream; the flush could also
   re-transcribe the whole utterance.
-* Silero VAC is loaded from the pip package or the local torch.hub cache, never with an
-  interactive trust prompt and without a GitHub request on every start.
+* Silero VAC is loaded from a local copy only (a model file shipped with the runtime, the
+  silero-vad package or an existing torch.hub cache): no trust prompt, no network.
+* Model weights are used as present: upstream hashed the 3 GB file on every start and
+  downloaded it again when the hash differed. The file names must stay large-v3.pt /
+  large-v3-turbo.pt because the alignment heads are chosen by name.
 
 The server loop itself is ours as well: one client per process, PCM16 alignment kept
 across reads, a heartbeat line every second, no caption text in the log, and distinct exit
@@ -43,7 +46,7 @@ EXIT_RUNTIME_MISSING = 6  # torch / librosa / upstream modules cannot be importe
 EXIT_OUT_OF_MEMORY = 7    # CUDA out of memory, at load time or while streaming
 EXIT_STALLED = 8          # one model update ran longer than --stall-exit-sec
 EXIT_CRASHED = 9          # any other exception while streaming
-EXIT_PARENT_GONE = 10     # the app closed our stdin (it exited or closed the engine)
+EXIT_PARENT_GONE = 10     # the app process ended (--parent-pid)
 
 SAMPLE_RATE = 16000
 LOG = logging.getLogger("streamer_caption.simul_server")
@@ -224,9 +227,15 @@ def patch_runaway_guard(max_new: int = 120) -> None:
     swm.PaddedAlignAttWhisper.infer = infer
 
 
-def patch_silero_loading() -> None:
-    """Upstream VAC calls torch.hub.load('snakers4/silero-vad', 'silero_vad'), which asks
-    GitHub for the default branch on every start and may prompt to trust the repo."""
+class OfflineFileMissing(RuntimeError):
+    """A file the server would otherwise fetch from the internet (model weights, Silero VAD)."""
+
+
+def patch_silero_loading(jit_path: str = "") -> None:
+    """Upstream VAC calls torch.hub.load('snakers4/silero-vad', 'silero_vad') without
+    trust_repo: on torch 2.14 the trust prompt with a closed stdin ends the server at start,
+    and every start asks GitHub for an unpinned master. Load a local copy only: the model file
+    shipped with the runtime, the silero-vad package, or an existing torch.hub cache."""
     import torch
 
     original_load = torch.hub.load
@@ -234,10 +243,15 @@ def patch_silero_loading() -> None:
     def load(repo_or_dir, model, *args, **kwargs):
         if str(repo_or_dir).strip("/").lower() != "snakers4/silero-vad" or model != "silero_vad":
             return original_load(repo_or_dir, model, *args, **kwargs)
+        if jit_path and Path(jit_path).is_file():
+            LOG.info("silero VAC: model file shipped with the runtime")
+            vad = torch.jit.load(jit_path, map_location="cpu")
+            vad.eval()
+            return vad, None
         try:
             from silero_vad import load_silero_vad
 
-            LOG.info("silero VAC: pip package")
+            LOG.info("silero VAC: silero-vad package")
             return load_silero_vad(), None
         except ImportError:
             pass
@@ -246,30 +260,77 @@ def patch_silero_loading() -> None:
             cached = hub_dir / f"snakers4_silero-vad_{ref}"
             if (cached / "hubconf.py").is_file():
                 LOG.info("silero VAC: local torch.hub cache")
-                return original_load(str(cached), model, source="local")
-        LOG.warning("silero VAC: no local copy; downloading once from GitHub")
-        kwargs.setdefault("trust_repo", True)
-        return original_load(repo_or_dir, model, *args, **kwargs)
+                return original_load(str(cached), model, source="local", trust_repo=True)
+        raise OfflineFileMissing("Silero VAD is not part of the runtime; the server does not download it")
 
     torch.hub.load = load
+
+
+def patch_model_download() -> None:
+    """Upstream's whisper._download re-reads the whole .pt for a SHA-256 on every start (3 GB in
+    RAM, seconds of CPU) and downloads it again from the internet when the hash differs. The
+    app's downloader checks the hash once; here a present file is used as is, never fetched."""
+    import os as _os
+
+    from simulstreaming.whisper.simul_whisper import whisper as whisper_module
+
+    if not hasattr(whisper_module, "_download"):
+        raise RuntimeError("upstream whisper._download not found")
+
+    def _download(url: str, root: str, in_memory: bool):
+        target = _os.path.join(root, _os.path.basename(url))
+        if not _os.path.isfile(target):
+            raise OfflineFileMissing(f"model file missing: {_os.path.basename(url)}")
+        if in_memory:
+            with open(target, "rb") as handle:
+                return handle.read()
+        return target
+
+    whisper_module._download = _download
 
 
 # --------------------------------------------------------------------------- watchdogs
 
 
-def watch_stdin_eof() -> None:
-    """The app keeps our stdin open; EOF means it exited or closed the engine."""
+def watch_parent(pid: int) -> None:
+    """Exit when the app process ends, so a crashed app never leaves ~10 GB of VRAM held.
+
+    Not done by reading stdin: on Windows a thread blocked in a synchronous read on the stdin
+    pipe stalls other calls on that handle (isatty during `import torch` hung the start)."""
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        synchronize = 0x00100000
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            LOG.warning("cannot watch the app process (%d)", ctypes.get_last_error())
+            return
+
+        def wait() -> None:
+            kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)  # the handle pins this exact process
+    else:
+        def wait() -> None:
+            while True:  # POSIX only: on Windows os.kill(pid, 0) would terminate the app
+                time.sleep(1.0)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    return
+
     def run() -> None:
-        try:
-            while sys.stdin.buffer.read(4096):
-                pass
-        except Exception:
-            pass
-        LOG.info("stdin closed by the app; exiting")
+        wait()
+        LOG.info("the app exited; exiting")
         logging.shutdown()
         os._exit(EXIT_PARENT_GONE)
 
-    threading.Thread(target=run, name="stdin-watch", daemon=True).start()
+    threading.Thread(target=run, name="parent-watch", daemon=True).start()
 
 
 class IterationWatchdog:
@@ -381,12 +442,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", required=True, help="vendored SimulStreaming source folder")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--port", type=int, default=0, help="0 with --port-file: any free port")
+    parser.add_argument("--port-file", default="", help="write the port actually listened on here")
     parser.add_argument("--heartbeat-sec", type=float, default=1.0)
     parser.add_argument("--stall-exit-sec", type=float, default=30.0)
     parser.add_argument("--accept-timeout-sec", type=float, default=120.0)
-    parser.add_argument("--watch-stdin", action="store_true")
+    parser.add_argument("--parent-pid", type=int, default=0, help="exit when this process (the app) ends")
     parser.add_argument("--allow-cpu", action="store_true", help="tests only; real-time needs CUDA")
+    parser.add_argument("--silero-jit", default="", help="Silero VAD model file shipped with the runtime")
     parser.add_argument("--no-warmup", action="store_true")
     parser.add_argument("--self-check", action="store_true",
                         help="import torch, check CUDA, the model file and the VAC; print JSON and exit")
@@ -398,13 +461,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s\t%(name)s\t%(message)s", stream=sys.stderr)
     LOG.setLevel(logging.INFO)
     own, rest = build_parser().parse_known_args(argv)
-    if own.watch_stdin:
-        watch_stdin_eof()
+    watch_parent(own.parent_pid)
     repo = Path(own.repo).resolve()
     if not (repo / "simulstreaming_whisper.py").is_file():
         LOG.error("SimulStreaming source not found: %s", repo.name)
         return EXIT_STARTUP
     sys.path.insert(0, str(repo))
+    began = time.perf_counter()
     try:
         import numpy  # noqa: F401
         import torch
@@ -427,8 +490,8 @@ def main(argv: list[str] | None = None) -> int:
     simulwhisper_args(parser)
     parser.set_defaults(log_level="WARNING")  # upstream's DEBUG default logs every decoded word
     args = parser.parse_args(argv)
-    if not own.self_check and not 0 < own.port < 65536:
-        LOG.error("--port is required")
+    if not own.self_check and not (0 < own.port < 65536 or (own.port == 0 and own.port_file)):
+        LOG.error("--port (or --port 0 with --port-file) is required")
         return EXIT_STARTUP
     # Upstream defaults to DEBUG, which logs every decoded word; keep its loggers quiet.
     for name in ("", "simulstreaming", "simul_whisper", "whisper_streaming", "simulstreaming_whisper"):
@@ -438,11 +501,16 @@ def main(argv: list[str] | None = None) -> int:
     if not model_path.is_file():
         LOG.error("model file not found: %s", model_path.name)
         return EXIT_MODEL_MISSING
+    if model_path.name not in {"large-v3.pt", "large-v3-turbo.pt"}:
+        # SimulStreaming picks its alignment heads by this name; a renamed file aligns badly.
+        LOG.error("model file must be named large-v3.pt or large-v3-turbo.pt, not %s", model_path.name)
+        return EXIT_MODEL_MISSING
     try:
         patch_unicode_split()
         patch_hide_incomplete_unicode()
         patch_runaway_guard()
-        patch_silero_loading()
+        patch_silero_loading(own.silero_jit)
+        patch_model_download()
     except Exception as exc:
         LOG.error("upstream source is not the expected version: %s", _describe(exc))
         return EXIT_STARTUP
@@ -455,21 +523,26 @@ def main(argv: list[str] | None = None) -> int:
         try:
             model, _ = torch.hub.load("snakers4/silero-vad", "silero_vad")
             report["vac"] = model is not None
-        except Exception as exc:
+        except Exception as exc:  # OfflineFileMissing: no local Silero copy
             report["vac"] = False
             report["vac_error"] = _describe(exc)
         print(json.dumps(report), flush=True)
         return EXIT_OK if report["vac"] else EXIT_RUNTIME_MISSING
 
     loaded = time.perf_counter()
+    LOG.info("runtime imported in %.1fs", loaded - began)
     try:
         asr, online = asr_factory(args, simul_asr_factory)
+        LOG.info("model and VAC loaded in %.1fs", time.perf_counter() - loaded)
         if not own.no_warmup:
             # One second of quiet noise compiles the CUDA kernels so the first real update is fast.
             import numpy as np
 
             noise = np.random.default_rng(0).standard_normal(SAMPLE_RATE).astype(np.float32) * 0.01
             asr.warmup(noise)
+    except OfflineFileMissing as exc:
+        LOG.error("%s", exc)
+        return EXIT_RUNTIME_MISSING if "Silero" in str(exc) else EXIT_MODEL_MISSING
     except Exception as exc:
         if is_out_of_memory(exc):
             LOG.error("out of GPU memory while loading %s", model_path.stem)
@@ -487,10 +560,17 @@ def main(argv: list[str] | None = None) -> int:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind((own.host, own.port))
         listener.listen(1)
+        port = int(listener.getsockname()[1])
+        if own.port_file:
+            # Bound before it is announced: no other program can take the port in between,
+            # which a port picked by the app and bound after a 20 s model load allowed.
+            temporary = Path(own.port_file + ".tmp")
+            temporary.write_text(str(port), encoding="ascii")
+            os.replace(temporary, own.port_file)
     except OSError as exc:
         LOG.error("cannot listen on %s:%s: %s", own.host, own.port, exc)
         return EXIT_STARTUP
-    LOG.info("listening on %s:%s", own.host, own.port)
+    LOG.info("listening on %s:%s", own.host, port)
     listener.settimeout(own.accept_timeout_sec if own.accept_timeout_sec > 0 else None)
     try:
         conn, _ = listener.accept()
@@ -517,7 +597,7 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     code = main()
     logging.shutdown()
-    # os._exit: a daemon thread blocked on stdin must not keep the interpreter alive.
+    # os._exit: the parent-watch daemon thread must not keep the interpreter alive.
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(code)

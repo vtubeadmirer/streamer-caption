@@ -132,7 +132,8 @@ def record_simulstreaming(config: dict[str, Any], defense: DefenseFilter, slang:
             event = CaptionEvent(event_type=output.event.event_type, text=output.event.text,
                                  confidence=output.event.confidence, audio_offset_sec=output.event.audio_offset_sec,
                                  engine=output.event.engine, metadata={**output.event.metadata, **route_metadata})
-            converted = pending_events(event, defense, slang) if output.pending else postprocess_event(event, defense, slang)
+            converted = (pending_events(event, defense, slang, min_chars=1, allow_single_char=True) if output.pending
+                         else postprocess_event(event, defense, slang, allow_single_char=True))
             for out in converted:
                 emit(out, extra=None if output.pending else {"raw_text": event.text, "caption_engine": "simulstreaming"})
     assert route.state == "off" and route.reason == "crashed", route.snapshot()
@@ -154,7 +155,7 @@ def pipeline_config(tmp: Path) -> dict[str, Any]:
     config["archive"]["recap"]["provider"] = "extractive"  # never hand test captions to a local LLM or CLI
     config["log"]["dir"] = str(tmp / "logs")
     (tmp / "models").mkdir(exist_ok=True)
-    (tmp / "models" / "large-v3.pt").write_bytes(b"x")
+    (tmp / "models" / "large-v3-turbo.pt").write_bytes(b"x")
     config["simulstreaming"]["model_dir"] = str(tmp / "models")
     config["simulstreaming"]["max_restarts"] = 0
     config["streaming"]["engine"] = "simulstreaming"
@@ -413,7 +414,7 @@ def check_bundle(result: dict[str, Any], members: dict[str, str], session_dir: P
     confirmed_simul = next(row for row in simul_captions if row["event_type"] == "caption_confirmed")
     assert confirmed_simul["extra"]["caption_engine"] == "simulstreaming", confirmed_simul["extra"]
     assert confirmed_simul["extra"]["raw_text"].startswith("[redacted"), confirmed_simul["extra"]
-    assert confirmed_simul["metadata"]["engine_model"] == "large-v3", confirmed_simul["metadata"]
+    assert confirmed_simul["metadata"]["engine_model"] == "large-v3-turbo", confirmed_simul["metadata"]
     validation = json.loads(members[session + "validation_report.json"])
     assert validation["annotations"][0]["caption_text"].startswith("[redacted") and validation["annotations"][0]["kind"] == "wrong_word"
     assert validation["verdict"] in {"PASS", "WARN", "REVIEW", "FAIL"} and validation["checks"][0]["name"] == "jsonl_parse"

@@ -13,8 +13,8 @@ import os
 import select
 import socket
 import sys
-import threading
 import time
+from pathlib import Path
 
 WORDS = ["오늘은", "날씨가", "정말", "좋네요.", "그래서", "산책을", "나가볼까", "합니다."]
 
@@ -22,6 +22,7 @@ WORDS = ["오늘은", "날씨가", "정말", "좋네요.", "그래서", "산책�
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port-file", default="")
     parser.add_argument("--mode", default="normal",
                         choices=["normal", "crash_after", "stall_after", "oom_after", "slow",
                                  "oom_start", "runtime_missing", "no_cuda", "hang_start", "close_after"])
@@ -31,18 +32,15 @@ def main() -> int:
     parser.add_argument("--final-sec", type=float, default=0.6)
     parser.add_argument("--voice-rms", type=float, default=0.02)
     parser.add_argument("--heartbeat-sec", type=float, default=0.25)
-    parser.add_argument("--watch-stdin", action="store_true")
+    parser.add_argument("--parent-pid", type=int, default=0)
     args, _ = parser.parse_known_args()
 
-    if args.watch_stdin:
-        def watch() -> None:
-            try:
-                while sys.stdin.buffer.read(4096):
-                    pass
-            except Exception:
-                pass
-            os._exit(10)
-        threading.Thread(target=watch, daemon=True).start()
+    if args.parent_pid:
+        # The real server's watcher (os.kill(pid, 0) would terminate the parent on Windows).
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from engines.simulstreaming.server import watch_parent
+
+        watch_parent(args.parent_pid)
 
     if args.mode == "oom_start":
         return 7
@@ -58,6 +56,9 @@ def main() -> int:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", args.port))
     listener.listen(1)
+    if args.port_file:  # like server.py: announce the port once it is bound
+        Path(args.port_file + ".tmp").write_text(str(listener.getsockname()[1]), encoding="ascii")
+        os.replace(args.port_file + ".tmp", args.port_file)
     listener.settimeout(30)
     conn, _ = listener.accept()
     listener.close()

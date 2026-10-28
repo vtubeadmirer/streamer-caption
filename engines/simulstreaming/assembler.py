@@ -1,7 +1,7 @@
 """Turns SimulStreaming's append-only text increments into caption lines.
 
-The server never revises text it has sent: every message adds a few words (" 생산",
-"단된다는", ...) and `is_final` closes a voiced segment. Captions therefore need no gray
+The server never revises text it has sent: every message adds a few words (" 오늘",
+"은 날씨", ...) and `is_final` closes a voiced segment. Captions therefore need no gray
 preview: the words of the current line are shown as they arrive (a *stable* pending line
 that only grows) and the line is committed as a confirmed caption at a sentence end, at the
 end of the voiced segment, or when it would grow past one caption line.
@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 SENTENCE_END = ".?!…。？！"
+
+
+def has_words(text: str) -> bool:
+    """False for punctuation-only leftovers (a "." that arrives after its line was committed)."""
+    return any(char.isalnum() for char in text)
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,7 @@ class CaptionAssembler:
             out.extend(self.flush())
             self.segment += 1
         pending = self._buffer.strip()
-        if pending and pending != self._last_pending:
+        if pending and has_words(pending) and pending != self._last_pending:
             out.append(AssembledText("pending", pending, self._end_at(len(self._buffer)), self.segment))
             self._last_pending = pending
         elif not pending:
@@ -57,9 +62,10 @@ class CaptionAssembler:
 
     def flush(self) -> list[AssembledText]:
         """Commit whatever is on the growing line (end of segment, fallback, shutdown)."""
-        if not self._buffer.strip():
+        if not has_words(self._buffer):
             self._buffer = ""
             self._marks = []
+            self._last_pending = ""
             return []
         return [self._commit(len(self._buffer))]
 
@@ -113,7 +119,9 @@ class CaptionAssembler:
                 index = self._length_cut()
             if index is None:
                 break
-            out.append(self._commit(index))
+            piece = self._commit(index)
+            if has_words(piece.text):
+                out.append(piece)
         return out
 
     def _sentence_cut(self) -> int | None:

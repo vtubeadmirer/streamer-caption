@@ -69,7 +69,7 @@
         </div>
         <p id="engineDescription" class="help"></p>
         <p id="engineUnavailable" class="help" hidden></p>
-        <label id="engineModelField" hidden><span class="hint" title="자동은 그래픽 메모리가 넉넉하면 large-v3, 아니면 large-v3-turbo를 씁니다."><span class="ko-text">정확 우선 모델</span><span class="en-text">Accuracy-first model</span></span>
+        <label id="engineModelField" hidden><span class="hint" title="기본은 large-v3-turbo입니다. large-v3는 조금 더 정확하지만 그래픽 메모리를 두 배 가까이 쓰고, 부족하면 자동으로 turbo를 씁니다."><span class="ko-text">정확 우선 모델</span><span class="en-text">Accuracy-first model</span></span>
           <select id="engineModel"></select>
         </label>
         <div id="engineRunning" class="help"></div>
@@ -888,7 +888,7 @@
       }
       panel.hidden = false;
       const saved = overview.selected;
-      const savedModel = overview.simulstreaming?.model || "auto";
+      const savedModel = overview.simulstreaming?.model || "large-v3-turbo";
       const selected = enginePick?.engine ?? saved;
       const model = enginePick?.model ?? savedModel;
       const accurate = engineOption("simulstreaming");
@@ -953,7 +953,7 @@
         if (button.disabled) return;
         enginePick = {
           engine: button.dataset.engine,
-          model: enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "auto",
+          model: enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "large-v3-turbo",
         };
         renderEngine();
       });
@@ -971,7 +971,7 @@
     });
     document.getElementById("engineApply").addEventListener("click", async () => {
       const engine = enginePick?.engine ?? engineOverview?.selected ?? "baseline";
-      const model = enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "auto";
+      const model = enginePick?.model ?? engineOverview?.simulstreaming?.model ?? "large-v3-turbo";
       state.textContent = uiText("자막 엔진 저장 중…", "Saving caption engine…");
       try {
         const response = await fetch("/api/engine", {

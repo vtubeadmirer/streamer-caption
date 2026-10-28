@@ -4,11 +4,14 @@ Only file-existence checks and an optional nvidia-smi call: the admin HTTP threa
 module, and importing torch or ctranslate2 there has crashed the app before.
 
 Where the optional runtime lives (phase 3 downloads it to the first location):
-  <install root>/simulstreaming/.venv            CUDA PyTorch runtime
-  <install root>/simulstreaming/models/*.pt      Whisper .pt weights
-  <install root>/simulstreaming/torch_home       Silero VAD torch.hub cache (optional)
+  <install root>/simulstreaming/.venv                  CUDA PyTorch runtime
+  <install root>/simulstreaming/models/large-v3-turbo.pt (and optionally large-v3.pt)
+  <install root>/simulstreaming/models/silero_vad.jit  Silero VAD for the VAC (or torch_home/)
 A developer checkout uses experiments/simulstreaming-runtime/ (setup_simulstreaming_experiment.bat).
 config.simulstreaming.python_executable / model_dir / model_path override the defaults.
+
+The model files must keep their exact names: SimulStreaming picks the attention heads it
+aligns words with by the file name (large-v3 vs large-v3-turbo).
 """
 from __future__ import annotations
 
@@ -24,27 +27,28 @@ from core.config import PROJECT_ROOT
 
 SERVER_SCRIPT = Path(__file__).resolve().with_name("server.py")
 
-# VRAM figures from the 2026-10 lab runs on an RTX 4060 Ti 16GB (peak growth of total GPU
-# memory while streaming, plus ~600 MiB margin). min_total is the card size we offer it on;
-# the faster-whisper standby model and the desktop need the rest.
+# VRAM figures from the 2026-10 lab runs on an RTX 4060 Ti 16GB (growth of total GPU memory
+# while streaming plus a margin; large-v3 reserved 9.8 GB and spiked to 13.4 GB without the
+# runaway guard). min_total is the card size we offer it on; the faster-whisper standby model,
+# OBS and the desktop need the rest.
 MODELS: dict[str, dict[str, Any]] = {
-    "large-v3": {
-        "file": "large-v3.pt",
-        "need_free_mib": 10_800,
-        "min_total_mib": 15_000,
-        "label_ko": "large-v3 (가장 정확, 그래픽 메모리 약 10GB)",
-        "label_en": "large-v3 (most accurate, about 10 GB of GPU memory)",
-    },
     "large-v3-turbo": {
         "file": "large-v3-turbo.pt",
         "need_free_mib": 6_300,
         "min_total_mib": 10_000,
-        "label_ko": "large-v3-turbo (가벼움, 그래픽 메모리 약 6GB)",
-        "label_en": "large-v3-turbo (lighter, about 6 GB of GPU memory)",
+        "label_ko": "large-v3-turbo (기본, 추천 · 그래픽 메모리 약 5GB)",
+        "label_en": "large-v3-turbo (default, recommended · about 5 GB of GPU memory)",
+    },
+    "large-v3": {
+        "file": "large-v3.pt",
+        "need_free_mib": 11_000,
+        "min_total_mib": 15_000,
+        "label_ko": "large-v3 (고급 · 조금 더 정확하지만 그래픽 메모리 10GB 이상, OBS·게임과 함께 쓰면 부족할 수 있음)",
+        "label_en": "large-v3 (advanced · slightly more accurate, 10 GB+ of GPU memory; may not fit beside OBS or a game)",
     },
 }
-MODEL_CHOICES = ("auto", "large-v3", "large-v3-turbo")
-AUTO_ORDER = ("large-v3", "large-v3-turbo")
+MODEL_CHOICES = ("large-v3-turbo", "large-v3")
+DEFAULT_MODEL = "large-v3-turbo"
 ENGINE_CHOICES = ("baseline", "simulstreaming")
 
 # Shown to streamers next to the disabled option; plain words, no paths.
@@ -114,7 +118,8 @@ def resolve_runtime(config: dict[str, Any]) -> dict[str, Any]:
     explicit = str(settings.get("model_path", "") or "").strip()
     if explicit:
         path = Path(explicit)
-        if path.is_file():
+        # Another file name would make SimulStreaming align words with the wrong heads.
+        if path.is_file() and path.stem in MODELS and path.name == MODELS[path.stem]["file"]:
             model_files[path.stem] = path
     else:
         for name, spec in MODELS.items():
@@ -122,6 +127,7 @@ def resolve_runtime(config: dict[str, Any]) -> dict[str, Any]:
             if path.is_file():
                 model_files[name] = path
     torch_home = root / "torch_home"
+    silero = model_dir / "silero_vad.jit"
     return {
         "repo_dir": repo_dir,
         "server_script": SERVER_SCRIPT,
@@ -131,6 +137,7 @@ def resolve_runtime(config: dict[str, Any]) -> dict[str, Any]:
         "model_files": model_files,
         "explicit_model": bool(explicit),
         "torch_home": torch_home if torch_home.is_dir() else None,
+        "silero_jit": silero if silero.is_file() else None,
     }
 
 
@@ -182,9 +189,8 @@ def engine_status(config: dict[str, Any], gpu_probe: Any = _DEFAULT_PROBE) -> di
     runtime = resolve_runtime(config)
     gpu = _probe(gpu_probe)
     models: dict[str, bool] = {}
-    for name, path in runtime["model_files"].items():
-        spec = MODELS.get(name, MODELS["large-v3"])
-        models[name] = gpu is None or gpu["total_mib"] >= spec["min_total_mib"]
+    for name in runtime["model_files"]:
+        models[name] = gpu is None or gpu["total_mib"] >= MODELS[name]["min_total_mib"]
     reason = ""
     if not runtime["repo_dir"].joinpath("simulstreaming_whisper.py").is_file() or not SERVER_SCRIPT.is_file():
         reason = "source_missing"
@@ -209,26 +215,27 @@ def choose_model(
     free_mib: int | None,
     exclude: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[str, Path | None, str]:
-    """(model name, .pt path, "") or ("", None, reason) for the configured choice and the
-    GPU memory that is free right now. `exclude`: models that already ran out of memory."""
+    """(model name, .pt path, "") or ("", None, reason) for the configured model and the GPU
+    memory free right now. large-v3 is the advanced choice: when it does not fit (or already ran
+    out of memory, `exclude`) turbo takes its place, so captions stay accurate rather than off.
+    A configured model that is not installed is replaced by the installed one."""
     files: dict[str, Path] = runtime["model_files"]
     if not files:
         return "", None, "model_missing"
-    wanted = str((config.get("simulstreaming", {}) or {}).get("model", "auto") or "auto")
+    wanted = str((config.get("simulstreaming", {}) or {}).get("model", DEFAULT_MODEL) or DEFAULT_MODEL)
     if runtime["explicit_model"]:
-        candidates = list(files)
-    elif wanted == "auto":
-        candidates = [name for name in AUTO_ORDER if name in files]
+        order = list(files)
     else:
-        candidates = [wanted] if wanted in files else []
+        # The configured model first, then the other installed one if it fits the free memory.
+        order = [wanted] + [name for name in MODEL_CHOICES if name != wanted]
+    candidates = [name for name in order if name in files]
     if not candidates:
         return "", None, "model_missing"
     candidates = [name for name in candidates if name not in exclude]
     if not candidates:
         return "", None, "out_of_memory"
     for name in candidates:
-        need = MODELS.get(name, MODELS["large-v3"])["need_free_mib"]
-        if free_mib is None or free_mib >= need:
+        if free_mib is None or free_mib >= MODELS[name]["need_free_mib"]:
             return name, files[name], ""
     return "", None, "not_enough_vram"
 
@@ -244,10 +251,10 @@ def engine_overview(
         selected = "baseline"
     status = engine_status(config, gpu_probe)
     settings = config.get("simulstreaming", {}) or {}
-    model = str(settings.get("model", "auto") or "auto")
+    model = str(settings.get("model", DEFAULT_MODEL) or DEFAULT_MODEL)
     running = dict(running or {})
-    models = [{"id": "auto", "label_ko": "자동 (추천)", "label_en": "Automatic (recommended)", "available": status["available"]}]
-    for name in AUTO_ORDER:
+    models = []
+    for name in MODEL_CHOICES:
         models.append({
             "id": name,
             "label_ko": MODELS[name]["label_ko"],
@@ -282,7 +289,7 @@ def engine_overview(
             },
         ],
         "simulstreaming": {
-            "model": model if model in MODEL_CHOICES else "auto",
+            "model": model if model in MODEL_CHOICES else DEFAULT_MODEL,
             "models": models,
             "frame_threshold": settings.get("frame_threshold"),
         },

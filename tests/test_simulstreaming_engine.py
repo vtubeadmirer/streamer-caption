@@ -27,7 +27,7 @@ from core.audio_capture import AudioChunk, AudioSegment  # noqa: E402
 from core.config import DEFAULTS, load_config  # noqa: E402
 from engines.simulstreaming import availability  # noqa: E402
 from engines.simulstreaming.assembler import CaptionAssembler  # noqa: E402
-from engines.simulstreaming.client import SimulStreamingClient, free_local_port  # noqa: E402
+from engines.simulstreaming.client import SimulStreamingClient  # noqa: E402
 from engines.simulstreaming.route import SimulStreamingRoute  # noqa: E402
 
 FAKE = ROOT / "tests" / "simul_fake_server.py"
@@ -36,7 +36,7 @@ BLOCK = 1024
 
 
 def fake_command(port: int, mode: str = "normal", **options: Any) -> list[str]:
-    command = [sys.executable, str(FAKE), "--port", str(port), "--mode", mode, "--watch-stdin"]
+    command = [sys.executable, str(FAKE), "--port", str(port), "--mode", mode, "--parent-pid", str(os.getpid())]
     for key, value in options.items():
         command += ["--" + key.replace("_", "-"), str(value)]
     return command
@@ -47,7 +47,7 @@ def base_config(tmp: Path) -> dict[str, Any]:
     config["log"]["dir"] = str(tmp / "logs")
     models = tmp / "models"
     models.mkdir(parents=True, exist_ok=True)
-    (models / "large-v3.pt").write_bytes(b"not a real model")
+    (models / "large-v3-turbo.pt").write_bytes(b"not a real model")
     config["simulstreaming"].update({
         "model_dir": str(models),
         "connect_timeout_sec": 10.0,
@@ -61,10 +61,9 @@ def base_config(tmp: Path) -> dict[str, Any]:
 
 
 def client_for(config: dict[str, Any], tmp: Path, mode: str = "normal", **options: Any) -> SimulStreamingClient:
-    port = free_local_port()
     config = copy.deepcopy(config)
-    config["simulstreaming"]["port"] = port
-    return SimulStreamingClient(config, log_path=tmp / "server.log", command=fake_command(port, mode, **options))
+    config["simulstreaming"]["port"] = 0  # the server picks the port and announces it, like the app
+    return SimulStreamingClient(config, log_path=tmp / "server.log", command=fake_command(0, mode, **options))
 
 
 def voiced(seconds: float, amplitude: float = 0.2, seed: int = 0) -> np.ndarray:
@@ -120,11 +119,55 @@ def check_assembler() -> None:
     c.push(word(" 버전 3.", 1.0))
     assert not [p for p in c.push(word("5", 1.2)) if p.kind == "confirmed"]
     assert c.text == "버전 3.5"
+    # A one-syllable utterance is shown and committed, never dropped.
+    e = CaptionAssembler()
+    assert [(o.kind, o.text) for o in e.push(word(" 네", 0.4))] == [("pending", "네")]
+    assert [(o.kind, o.text) for o in e.push({"is_final": True, "end": 0.9})] == [("confirmed", "네")]
+    # A period that arrives after its line was committed by length is not a caption of its own.
+    f = CaptionAssembler(max_chars=8)
+    pieces = f.push(word(" 가나다라", 1.0)) + f.push(word(" 마바사아", 1.5)) + f.push(word(" 자차카", 2.0))
+    pieces += f.push({"text": ".", "is_final": True, "end": 2.4, "words": [{"text": ".", "end": 2.3}]})
+    assert "." not in [p.text for p in pieces], pieces
+    g = CaptionAssembler(max_chars=8)
+    g.push(word(" 가나다라마바", 1.0))
+    g.push(word(" 사아", 1.2))  # commits "가나다라마바"
+    assert "." not in [p.text for p in g.push({"text": " .", "is_final": False, "end": 1.4})], "no '.' line"
+    assert [p.text for p in g.flush()] == ["사아 ."]
+    h = CaptionAssembler()
+    assert h.push({"text": ".", "is_final": True, "end": 1.0}) == [], "a bare period is not shown or committed"
+
     # Word timings that do not add up to the text fall back to the message end.
     d = CaptionAssembler()
     out = d.push({"text": " 안녕", "end": 4.0, "is_final": False, "words": [{"text": "다른", "end": 1.0}]})
     assert out[0].end_sec == 4.0, out
     assert d.flush()[0].text == "안녕" and d.flush() == []
+
+
+def check_single_syllable_display() -> None:
+    """The 정확 우선 path shows one-syllable words; the 기본 path keeps its filters as they were."""
+    import main
+    from core.events import CaptionEvent
+    from features.defense import DefenseFilter
+    from features.slang import SlangDictionary
+
+    config = copy.deepcopy(DEFAULTS)
+    tmp = Path(tempfile.mkdtemp())
+    config["defense"]["blocklist_path"] = str(tmp / "blocklist.txt")
+    config["defense"]["whitelist_path"] = str(tmp / "whitelist.txt")
+    config["slang"]["dict_path"] = str(tmp / "slang.json")
+    defense, slang = DefenseFilter(config), SlangDictionary(config)
+    event = CaptionEvent(event_type="caption_confirmed", text="네", confidence=1.0, audio_offset_sec=3.0,
+                         engine="simulstreaming", metadata={"stable": True})
+    assert main.pending_events(event, defense, slang) == [], "기본 previews: unchanged"
+    shown = main.pending_events(event, defense, slang, min_chars=1, allow_single_char=True)
+    assert [(e.event_type, e.text) for e in shown] == [("caption_pending", "네")], shown
+    assert main.postprocess_event(event, defense, slang)[0].event_type == "caption_hidden"
+    confirmed = main.postprocess_event(event, defense, slang, allow_single_char=True)
+    assert [(e.event_type, e.text) for e in confirmed] == [("caption_confirmed", "네")], confirmed
+    # Every other rule still applies: a subtitle credit is hidden on this path too.
+    credit = CaptionEvent(event_type="caption_confirmed", text="자막 제공 배달의 민족", confidence=1.0,
+                          audio_offset_sec=5.0, engine="simulstreaming", metadata={})
+    assert main.postprocess_event(credit, defense, slang, allow_single_char=True)[0].event_type == "caption_hidden"
 
 
 # --------------------------------------------------------------------------- server loop
@@ -203,6 +246,23 @@ def check_server_loop() -> None:
     assert code == srv.EXIT_STALLED, code
     assert srv.is_out_of_memory(RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB"))
     assert not srv.is_out_of_memory(ValueError("Token mismatch"))
+
+
+def check_parent_watch() -> None:
+    """A server whose app died (crash, closed console) exits instead of holding the GPU."""
+    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    child = subprocess.Popen([sys.executable, str(FAKE), "--port", "0", "--mode", "hang_start",
+                              "--parent-pid", str(parent.pid)])
+    try:
+        time.sleep(1.5)
+        assert child.poll() is None, "the server must run while the app runs"
+        parent.kill()
+        parent.wait(timeout=10)
+        assert child.wait(timeout=10) == 10, child.returncode
+    finally:
+        for process in (parent, child):
+            if process.poll() is None:
+                process.kill()
 
 
 # --------------------------------------------------------------------------- client
@@ -319,11 +379,10 @@ def route_with(config: dict[str, Any], tmp: Path, modes: list[str], **options: A
         mode = modes[min(len(launches), len(modes) - 1)]
         launches.append(mode)
         models.append(Path(str(model_path)).name)
-        port = free_local_port()
         cfg = copy.deepcopy(cfg)
-        cfg["simulstreaming"]["port"] = port
+        cfg["simulstreaming"]["port"] = 0
         return SimulStreamingClient(cfg, model_path=model_path, log_path=log_path,
-                                    command=fake_command(port, mode, **options))
+                                    command=fake_command(0, mode, **options))
 
     route = SimulStreamingRoute(config, "microphone", log_dir=tmp, client_factory=factory,
                                 status_provider=lambda cfg: {"available": True, "reason": ""},
@@ -449,14 +508,14 @@ def check_route_retry_limit_and_unretryable(tmp: Path) -> None:
 
 def check_route_lighter_model_and_internal_error(tmp: Path) -> None:
     config = base_config(tmp)
-    (Path(config["simulstreaming"]["model_dir"]) / "large-v3-turbo.pt").write_bytes(b"x")
-    config["simulstreaming"]["model"] = "auto"
+    (Path(config["simulstreaming"]["model_dir"]) / "large-v3.pt").write_bytes(b"x")
+    config["simulstreaming"]["model"] = "large-v3"  # the advanced choice
     route = route_with(config, tmp, ["oom_start", "normal"])
     timeline = Timeline(route)
     try:
         route.standby_ready()
         assert wait_for(lambda: (timeline.idle(0.1) or route.state) == "active", 12), timeline.states()
-        # "auto": large-v3 ran out of memory, so the retry used the lighter model.
+        # large-v3 ran out of memory, so the retry used turbo instead of giving up.
         assert route.launch_models == ["large-v3.pt", "large-v3-turbo.pt"], route.launch_models
         assert route.model == "large-v3-turbo" and route.restarts == 1, route.snapshot()
         assert ("fallback", "out_of_memory") in timeline.states(), timeline.states()
@@ -474,13 +533,13 @@ def check_route_lighter_model_and_internal_error(tmp: Path) -> None:
     finally:
         route.close()
 
-    config["simulstreaming"]["model"] = "large-v3"  # an explicit choice is not swapped for another model
+    config["simulstreaming"]["model"] = "large-v3-turbo"  # the default has no lighter model to fall back to
     route = route_with(config, tmp, ["oom_start"])
     timeline = Timeline(route)
     try:
         route.standby_ready()
         assert wait_for(lambda: (timeline.idle(0.1) or route.state) == "off", 8), timeline.states()
-        assert route.reason == "out_of_memory" and route.launch_models == ["large-v3.pt"]
+        assert route.reason == "out_of_memory" and route.launch_models == ["large-v3-turbo.pt"]
     finally:
         route.close()
 
@@ -512,7 +571,6 @@ def check_route_unavailable_and_vram(tmp: Path) -> None:
     assert "추가 구성요소" in route.notice() and route.snapshot()["active_engine"] == "baseline"
     route.close()
 
-    config["simulstreaming"]["model"] = "auto"
     route = SimulStreamingRoute(config, "microphone", status_provider=lambda cfg: {"available": True},
                                 gpu_probe=lambda: {"total_mib": 16380, "free_mib": 3000})
     route.standby_ready()
@@ -558,28 +616,42 @@ def check_availability(tmp: Path) -> None:
     python = make_runtime(tmp / "rt", models=("large-v3.pt", "large-v3-turbo.pt"))
     config["simulstreaming"]["python_executable"] = str(python)
     status = availability.engine_status(config, gpu_probe=None)
-    assert status["available"] and status["models"] == {"large-v3": True, "large-v3-turbo": True}, status
+    assert status["available"] and status["models"] == {"large-v3-turbo": True, "large-v3": True}, status
     small = availability.engine_status(config, gpu_probe=lambda: {"total_mib": 12288, "free_mib": 9000})
-    assert small["available"] and small["models"] == {"large-v3": False, "large-v3-turbo": True}, small
+    assert small["available"] and small["models"] == {"large-v3-turbo": True, "large-v3": False}, small
     tiny = availability.engine_status(config, gpu_probe=lambda: {"total_mib": 8192, "free_mib": 7000})
     assert tiny["reason"] == "gpu_too_small", tiny
 
     runtime = availability.resolve_runtime(config)
     assert runtime["runtime_root"] == tmp / "rt" and runtime["model_dir"] == tmp / "rt" / "models"
+    assert config["simulstreaming"]["model"] == "large-v3-turbo", "turbo is the default"
+    assert availability.choose_model(config, runtime, 12000)[0] == "large-v3-turbo"
+    assert availability.choose_model(config, runtime, None)[0] == "large-v3-turbo"
+    assert availability.choose_model(config, runtime, 4000) == ("", None, "not_enough_vram")
+    config["simulstreaming"]["model"] = "large-v3"  # advanced: used only when it fits
     assert availability.choose_model(config, runtime, 12000)[0] == "large-v3"
     assert availability.choose_model(config, runtime, 8000)[0] == "large-v3-turbo"
-    assert availability.choose_model(config, runtime, None)[0] == "large-v3"
     assert availability.choose_model(config, runtime, 4000) == ("", None, "not_enough_vram")
     assert availability.choose_model(config, runtime, 12000, {"large-v3"})[0] == "large-v3-turbo"
     assert availability.choose_model(config, runtime, 12000, {"large-v3", "large-v3-turbo"}) == (
         "", None, "out_of_memory")
+    turbo_only = make_runtime(tmp / "rt_turbo", models=("large-v3-turbo.pt",))
+    config["simulstreaming"]["python_executable"] = str(turbo_only)
+    assert availability.choose_model(config, availability.resolve_runtime(config), 12000)[0] == "large-v3-turbo"
+    # SimulStreaming chooses its alignment heads by file name: a renamed model is not offered.
+    renamed = tmp / "rt" / "models" / "whisper-big.pt"
+    renamed.write_bytes(b"x")
+    config["simulstreaming"]["model_path"] = str(renamed)
+    assert availability.resolve_runtime(config)["model_files"] == {}
+    config["simulstreaming"]["model_path"] = str(tmp / "rt" / "models" / "large-v3.pt")
+    assert list(availability.resolve_runtime(config)["model_files"]) == ["large-v3"]
+    config["simulstreaming"]["model_path"] = ""
+    config["simulstreaming"]["python_executable"] = str(python)
     config["simulstreaming"]["model"] = "large-v3-turbo"
-    assert availability.choose_model(config, runtime, 12000)[0] == "large-v3-turbo"
-    config["simulstreaming"]["model"] = "large-v3"
-    assert availability.choose_model(config, runtime, 8000) == ("", None, "not_enough_vram")
 
-    overview = availability.engine_overview(config, {"requested_engine": "baseline", "model_setting": "auto"},
-                                            gpu_probe=None)
+    overview = availability.engine_overview(config, {"requested_engine": "baseline",
+                                                      "model_setting": "large-v3-turbo"}, gpu_probe=None)
+    assert [item["id"] for item in overview["simulstreaming"]["models"]] == ["large-v3-turbo", "large-v3"]
     assert overview["selected"] == "baseline" and not overview["restart_required"]
     accurate = next(option for option in overview["options"] if option["id"] == "simulstreaming")
     assert accurate["available"] and accurate["label_ko"] == "정확 우선"
@@ -603,7 +675,12 @@ def check_config_migration(tmp: Path) -> None:
     path.write_text(json.dumps(custom), encoding="utf-8")
     kept = load_config(path)["simulstreaming"]
     assert kept["frame_threshold"] == 30 and kept["min_chunk_size"] == 1.0, kept
+    legacy = copy.deepcopy(DEFAULTS)
+    legacy["simulstreaming"]["model"] = "auto"  # stored by development builds before the turbo default
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    assert load_config(path)["simulstreaming"]["model"] == "large-v3-turbo"
     assert DEFAULTS["streaming"]["engine"] == "baseline", "기본 stays the default engine"
+    assert DEFAULTS["simulstreaming"]["model"] == "large-v3-turbo", "turbo is the 정확 우선 default"
     assert DEFAULTS["simulstreaming"]["frame_threshold"] == 40 and DEFAULTS["simulstreaming"]["min_chunk_size"] == 0.5
 
 
@@ -691,6 +768,90 @@ def check_pipeline(tmp: Path) -> None:
     assert {"simulstreaming", "echo"} <= engines, engines
 
 
+class FakeDualSource:
+    """Microphone and PC playback chunks interleaved, like DualAudioChunkSource."""
+
+    source_name = "both"
+    dropped_chunks = 0
+    restart_count = 0
+    last_error = ""
+    input_gain = 1.0
+    device_label = "fake dual"
+
+    def __init__(self, microphone: np.ndarray, system: np.ndarray) -> None:
+        self.audio = {"microphone": microphone, "system": system}
+        self.sources = {name: FakeSource(audio) for name, audio in self.audio.items()}
+
+    def source_statuses(self) -> dict[str, dict[str, Any]]:
+        return {name: {"restart_count": 0, "last_error": "", "dropped_chunks": 0, "device_label": "fake"}
+                for name in self.audio}
+
+    def chunks(self, max_seconds: float | None = None):
+        started = time.monotonic()
+        length = max(len(audio) for audio in self.audio.values())
+        for index in range(0, length, BLOCK):
+            target = started + (index + BLOCK) / SR
+            time.sleep(max(0.0, target - time.monotonic()))
+            for name, audio in self.audio.items():
+                block = audio[index:index + BLOCK]
+                if block.size:
+                    yield AudioChunk(samples=block, rms=float(np.sqrt(np.mean(block ** 2))), offset_sec=index / SR,
+                                     duration_sec=len(block) / SR, source_name=name)
+
+
+def check_pipeline_dual(tmp: Path) -> None:
+    """Dual input: SimulStreaming takes the microphone, faster-whisper keeps PC playback."""
+    import main
+    from core.stt_process_worker import _EchoEngine
+    from core.stt_worker import SttWorker
+
+    config = base_config(tmp)
+    config["archive"]["db_path"] = str(tmp / "transcripts.sqlite3")
+    config["archive"]["recap"]["provider"] = "extractive"
+    config["defense"]["blocklist_path"] = str(tmp / "blocklist.txt")
+    config["defense"]["whitelist_path"] = str(tmp / "whitelist.txt")
+    config["slang"]["dict_path"] = str(tmp / "slang.json")
+    config["vad"]["engine"] = "energy"
+    config["audio"]["source"] = "both"
+    config["streaming"]["engine"] = "simulstreaming"
+    config["streaming"]["worker_mode"] = "thread"
+    microphone = np.concatenate([silent(1.5), voiced(2.2, seed=1), silent(1.2), voiced(2.2, seed=2), silent(1.5)])
+    system = np.concatenate([silent(4.0), voiced(1.5, seed=3), silent(3.1)])
+    routes: list[SimulStreamingRoute] = []
+
+    def make_route(cfg: dict[str, Any], source_names: tuple[str, ...], log_dir: Any) -> SimulStreamingRoute:
+        assert source_names == ("microphone", "system"), source_names
+        route = route_with(cfg, Path(log_dir), ["normal"])
+        routes.append(route)
+        return route
+
+    originals = (main.create_audio_chunk_source, main.create_and_start_stt_worker, main.create_engine_route,
+                 main.prepare_runtime_config)
+    main.create_audio_chunk_source = lambda cfg: FakeDualSource(microphone, system)
+    main.create_and_start_stt_worker = lambda cfg, engine: (_started(SttWorker(_EchoEngine(cfg))), "")
+    main.create_engine_route = make_route
+    # PC playback normally switches to Silero, which does not take synthetic noise for speech.
+    main.prepare_runtime_config = lambda cfg: (cfg, None)
+    try:
+        code = main.run_v2_light(config, None, None, False, False, False)
+    finally:
+        (main.create_audio_chunk_source, main.create_and_start_stt_worker, main.create_engine_route,
+         main.prepare_runtime_config) = originals
+    assert code == 0, code
+    assert routes and routes[0].source_name == "microphone"
+    session = sorted((tmp / "logs").glob("*/session.jsonl"))[-1]
+    rows = [json.loads(line) for line in session.read_text(encoding="utf-8").splitlines() if line.strip()]
+    confirmed = [row for row in rows if row["event_type"] == "caption_confirmed"]
+    simul = [row for row in confirmed if row["engine"] == "simulstreaming"]
+    echo = [row for row in confirmed if row["engine"] == "echo"]
+    assert simul and all(row["metadata"]["audio_source"] == "microphone" for row in simul), simul
+    assert all(row["metadata"]["source_label"] for row in simul), "dual input labels SimulStreaming captions too"
+    assert [row for row in echo if row["metadata"]["audio_source"] == "system"], "PC playback stays on faster-whisper"
+    assert not [row for row in echo if row["metadata"]["audio_source"] == "microphone"
+                and row["metadata"].get("segment_start_offset_sec", 0) > routes[0].origin_offset + 0.5], (
+        "faster-whisper must not caption the microphone while SimulStreaming owns it")
+
+
 def _started(worker: Any) -> Any:
     worker.start()
     return worker
@@ -700,7 +861,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
         tmp = Path(directory)
         check_assembler()
+        check_single_syllable_display()
         check_server_loop()
+        check_parent_watch()
         print("assembler/server loop ok", flush=True)
         check_availability(tmp / "availability")
         check_config_migration(tmp)
@@ -715,6 +878,7 @@ def main() -> int:
         check_route_lighter_model_and_internal_error(tmp / "lighter")
         print("route ok", flush=True)
         check_pipeline(tmp / "pipeline")
+        check_pipeline_dual(tmp / "dual")
         print("pipeline ok", flush=True)
     print("simulstreaming_engine_ok")
     return 0

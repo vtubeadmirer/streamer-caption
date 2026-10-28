@@ -277,7 +277,7 @@ class AdminServer:
                         self._send_json({"error": "engine must be baseline or simulstreaming"}, HTTPStatus.BAD_REQUEST)
                         return
                     if model is not None and model not in MODEL_CHOICES:
-                        self._send_json({"error": "model must be auto, large-v3 or large-v3-turbo"}, HTTPStatus.BAD_REQUEST)
+                        self._send_json({"error": "model must be large-v3-turbo or large-v3"}, HTTPStatus.BAD_REQUEST)
                         return
                     patch: dict[str, Any] = {"streaming": {"engine": engine}}
                     if model is not None:

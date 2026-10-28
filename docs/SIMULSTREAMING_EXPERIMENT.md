@@ -1,5 +1,11 @@
 # SimulStreaming Experimental Adapter
 
+> **Superseded (2026-10-29):** SimulStreaming is now the 정확 우선 caption engine inside the
+> v2_light pipeline, with automatic fallback to faster-whisper. The adapter described below
+> (non-final JSON as full-text previews) misread the server's append-only increments and was
+> removed; `--simulstreaming-experiment` now runs v2_light with the 정확 우선 engine. See
+> `docs/simulstreaming.md`. This page is kept as the July 2026 history.
+
 Last updated: 2026-07-11
 Status: integrated as an opt-in experiment; baseline `B` remains unchanged.
 

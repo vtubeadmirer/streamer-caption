@@ -44,9 +44,12 @@ def main() -> int:
     source_version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
 
     optional_requirements = (ROOT / "requirements_simulstreaming_windows.txt").read_text(encoding="utf-8").splitlines()
-    assert "librosa==0.11.0" in optional_requirements
-    assert "tqdm==4.68.4" in optional_requirements
-    assert "tiktoken==0.12.0" in optional_requirements
+    # The 정확 우선 runtime stays pinned to what the engine was measured with (docs/simulstreaming.md).
+    assert "torch==2.14.1+cu126" in optional_requirements
+    assert "librosa==1.0.0" in optional_requirements
+    assert "tqdm==4.70.1" in optional_requirements
+    assert "tiktoken==0.14.0" in optional_requirements
+    assert not [line for line in optional_requirements if line.startswith(("torchaudio", "silero-vad"))]
 
     with tempfile.TemporaryDirectory(prefix="streamer-release-test-") as temp:
         base = Path(temp)

@@ -90,7 +90,7 @@
     "enabled": false,
     "repo_dir": "experiments/vendor/SimulStreaming",
     "python_executable": "",
-    "model": "auto",
+    "model": "large-v3-turbo",
     "model_dir": "",
     "model_path": "",
     "allow_auto_download": false,

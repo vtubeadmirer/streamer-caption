@@ -72,7 +72,7 @@ def child() -> int:
         accurate = next(option for option in overview["options"] if option["id"] == "simulstreaming")
         assert accurate["available"] is True and accurate["reason"] == "", accurate
         models = {item["id"]: item["available"] for item in overview["simulstreaming"]["models"]}
-        assert models == {"auto": True, "large-v3": True, "large-v3-turbo": False}, models
+        assert models == {"large-v3-turbo": False, "large-v3": True}, models
 
         # A page on another site must not switch the engine.
         status, body = call(port, "/api/engine", {"engine": "simulstreaming"}, origin="http://evil.example")

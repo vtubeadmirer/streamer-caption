@@ -26,12 +26,6 @@ class SimulStreamingError(RuntimeError):
     pass
 
 
-def free_local_port(host: str = "127.0.0.1") -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind((host, 0))
-        return int(probe.getsockname()[1])
-
-
 class SimulStreamingClient:
     """Owns one SimulStreaming server process and its TCP stream.
 
@@ -60,6 +54,7 @@ class SimulStreamingClient:
         self.server_script = Path(runtime["server_script"])
         self.python_executable = str(runtime["python"] or sys.executable)
         self.torch_home = runtime["torch_home"]
+        self.silero_jit = runtime.get("silero_jit")
         default_model = next(iter(runtime["model_files"].values()), None)
         self.model_path = str(model_path or default_model or settings.get("model_path") or "")
         self.host = str(settings.get("host", "127.0.0.1"))
@@ -79,6 +74,7 @@ class SimulStreamingClient:
         self.max_backlog_sec = max(self.stall_timeout_sec * 2, 30.0)
         self._command_override = list(command) if command else None
         self._log_path = Path(log_path) if log_path else None
+        self._port_file: Path | None = None  # the server writes the port it bound (port 0 = any)
 
         self._process: subprocess.Popen[bytes] | None = None
         self._server_log: Any | None = None
@@ -110,7 +106,10 @@ class SimulStreamingClient:
 
     def server_command(self) -> list[str]:
         if self._command_override is not None:
-            return list(self._command_override)
+            command = list(self._command_override)
+            if self._port_file is not None:
+                command += ["--port", "0", "--port-file", str(self._port_file)]
+            return command
         if not (self.repo_dir / "simulstreaming_whisper.py").exists():
             raise SimulStreamingError("SimulStreaming source was not found")
         if not self.model_path:
@@ -122,7 +121,8 @@ class SimulStreamingClient:
             "--repo", str(self.repo_dir),
             "--host", self.host,
             "--port", str(self.port),
-            "--watch-stdin",
+            *(["--port-file", str(self._port_file)] if self._port_file is not None else []),
+            "--parent-pid", str(os.getpid()),
             "--stall-exit-sec", str(max(20.0, self.stall_timeout_sec * 2)),
             "--accept-timeout-sec", str(max(60.0, self.start_timeout_sec)),
             "-l", "WARNING",
@@ -134,6 +134,8 @@ class SimulStreamingClient:
             "--frame_threshold", str(self.frame_threshold),
             "--model_path", self.model_path,
         ]
+        if self.silero_jit is not None:
+            command.extend(["--silero-jit", str(self.silero_jit)])
         if self.never_fire:
             command.append("--never_fire")
         if self.use_vac:
@@ -149,17 +151,22 @@ class SimulStreamingClient:
             return
         self._launched_at = time.monotonic()
         if self.start_server:
+            log_path = self._log_path or (
+                user_path(self.config.get("log", {}).get("dir", "logs"))
+                / f"simulstreaming_server_{time.strftime('%Y%m%d_%H%M%S')}.log"
+            )
             if self.port <= 0:
-                self.port = free_local_port(self.host)
+                # The server binds any free port and names it in this file once it listens.
+                self._port_file = log_path.parent / f"simulstreaming_{os.getpid()}_{id(self)}.port"
+                try:
+                    self._port_file.unlink()
+                except OSError:
+                    pass
             try:
                 command = self.server_command()
             except SimulStreamingError as exc:
                 self._fail("model_missing" if "model" in str(exc) else "source_missing", str(exc))
                 return
-            log_path = self._log_path or (
-                user_path(self.config.get("log", {}).get("dir", "logs"))
-                / f"simulstreaming_server_{time.strftime('%Y%m%d_%H%M%S')}.log"
-            )
             try:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 self._server_log = log_path.open("ab")
@@ -177,13 +184,14 @@ class SimulStreamingClient:
                 self._process = subprocess.Popen(
                     command,
                     cwd=str(self.repo_dir if self.repo_dir.is_dir() else Path(__file__).resolve().parent),
-                    stdin=subprocess.PIPE,
+                    # No stdin pipe: a thread blocked reading it stalled `import torch` on Windows.
+                    stdin=subprocess.DEVNULL,
                     stdout=self._server_log,
                     stderr=subprocess.STDOUT,
                     env=env,
                     # Share the app's console (CREATE_NO_WINDOW would make the venv launcher's
                     # child open a console window of its own) but not its Ctrl+C: the app stops
-                    # the server itself by closing stdin.
+                    # the server itself (closed connection, or kill while it is still loading).
                     creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
                 )
             except OSError as exc:
@@ -217,13 +225,10 @@ class SimulStreamingClient:
             sock.close()
         process = self._process
         if process is not None:
+            # A connected server returns when its connection closes; one still loading the model
+            # has nothing to finish and is stopped at once.
             try:
-                if process.stdin is not None:
-                    process.stdin.close()  # the server exits on stdin EOF
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=5.0)
+                process.wait(timeout=5.0 if sock is not None else 0.2)
             except subprocess.TimeoutExpired:
                 process.kill()
                 try:
@@ -235,6 +240,11 @@ class SimulStreamingClient:
             if thread is not threading.current_thread():
                 thread.join(timeout=2.0)
         self._threads = []
+        if self._port_file is not None:
+            try:
+                self._port_file.unlink()
+            except OSError:
+                pass
         if self._server_log is not None:
             try:
                 self._server_log.close()
@@ -400,6 +410,14 @@ class SimulStreamingClient:
             process = self._process
             if process is not None and process.poll() is not None:
                 return  # failure() classifies the exit code
+            if self.port <= 0:
+                try:
+                    self.port = int(self._port_file.read_text(encoding="ascii").strip()) if self._port_file else 0
+                except (OSError, ValueError):
+                    self.port = 0
+                if self.port <= 0:
+                    self._stop.wait(0.25)  # still loading the model
+                    continue
             try:
                 sock = socket.create_connection((self.host, self.port), timeout=1.0)
             except OSError:

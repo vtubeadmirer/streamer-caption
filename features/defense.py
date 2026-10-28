@@ -84,7 +84,10 @@ class DefenseFilter:
         metadata: dict[str, Any] | None = None,
         *,
         remember: bool = True,
+        allow_single_char: bool = False,
     ) -> DefenseResult:
+        """allow_single_char: the 정확 우선 engine's one-syllable words ("네") are real speech;
+        every other rule still applies to them."""
         normalized = text.strip()
         if not normalized:
             return DefenseResult(False, "", 0.0, "empty")
@@ -184,6 +187,7 @@ class DefenseFilter:
 
         if (
             self.filter_single_char
+            and not allow_single_char
             and len(normalized.replace(" ", "")) <= 1
         ):
             return DefenseResult(False, normalized, 0.0, "single_char")
