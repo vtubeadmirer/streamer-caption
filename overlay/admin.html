@@ -24,15 +24,15 @@
       <div id="saveState" class="status">loading</div>
     </div>
   </header>
-  <div id="updateBanner" class="notice notice-warning" hidden style="margin:12px 16px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px">
+  <div id="updateBanner" class="notice notice-warning update-banner" hidden>
     <span id="updateBannerText"></span>
-    <span style="display:flex;gap:8px;flex-wrap:wrap">
+    <span class="update-banner-actions">
       <button id="updateInstall" class="button button-primary" type="button"><span class="ko-text">지금 업데이트</span><span class="en-text">Update now</span></button>
       <button id="updateRestart" class="button button-primary" type="button" hidden><span class="ko-text">다시 시작해서 적용</span><span class="en-text">Restart to apply</span></button>
       <button id="updateSkip" class="button" type="button"><span class="ko-text">이 버전 건너뛰기</span><span class="en-text">Skip this version</span></button>
       <button id="updateLater" class="button" type="button"><span class="ko-text">나중에</span><span class="en-text">Later</span></button>
     </span>
-    <div id="updateProgress" style="flex-basis:100%;display:none"><div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden"><div id="updateProgressBar" style="height:100%;width:0;background:var(--accent);transition:width .3s"></div></div></div>
+    <div id="updateProgress" class="update-progress" hidden><div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden"><div id="updateProgressBar" style="height:100%;width:0;background:var(--accent);transition:width .3s"></div></div></div>
   </div>
   <dialog id="bugDialog" style="max-width:560px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);padding:20px">
     <h2 style="margin-top:0"><span class="ko-text">버그 보내기</span><span class="en-text">Report a bug</span></h2>
@@ -1363,14 +1363,21 @@
     document.getElementById("saveRaw").addEventListener("click", () => savePatch(JSON.parse(rawConfig.value)));
 
     // ---- version badge, update banner, restart, bug report
-    const updateBanner = document.getElementById("updateBanner");
-    const updateText = document.getElementById("updateBannerText");
     const postJson = (path, payload) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload || {}) });
     const ko = () => document.body.classList.contains("lang-ko");
     const t = (k, e) => (ko() ? k : e);
+    let restartPending = false;
+
+    // ---- update banner (tests/test_admin_update_banner.mjs runs this block on its own)
+    const updateBanner = document.getElementById("updateBanner");
+    const updateText = document.getElementById("updateBannerText");
+    const UPDATE_BUSY = ["starting", "checking", "downloading"];
+    const UP_TO_DATE_NOTICE_MS = 3000;
     let updateSnapshot = null;
     let updateDismissed = sessionStorage.getItem("streamerCaptionUpdateLater") === "1";
-    let restartPending = false;
+    let updateRequested = false;  // 지금 업데이트 was clicked and that install has not ended yet
+    let upToDateUntil = 0;  // Date.now() until which "이미 최신 버전입니다" stays up
+    let updateGeneration = 0;  // a click bumps it, so status replies requested before the click are dropped
 
     function renderUpdate(snapshot) {
       updateSnapshot = snapshot;
@@ -1380,6 +1387,14 @@
       versionEl.title = app.portable ? "portable" : app.managed ? "installed" : "source checkout";
       const check = snapshot.check || {};
       const install = snapshot.install || {};
+      if (updateRequested && !UPDATE_BUSY.includes(install.state)) {
+        updateRequested = false;
+        if (install.state === "idle") {
+          // The click found nothing newer to install: say so for a moment, then hide the banner.
+          upToDateUntil = Date.now() + UP_TO_DATE_NOTICE_MS;
+          setTimeout(() => { if (updateSnapshot) renderUpdate(updateSnapshot); }, UP_TO_DATE_NOTICE_MS + 50);
+        }
+      }
       const buttons = {
         install: document.getElementById("updateInstall"),
         restart: document.getElementById("updateRestart"),
@@ -1391,25 +1406,29 @@
       const showButtons = (names) => Object.entries(buttons).forEach(([name, el]) => { el.hidden = !names.includes(name); });
       const mb = (n) => (n / 1048576).toFixed(0);
       let show = false;
-      progress.style.display = "none";
+      progress.hidden = true;
       if (install.state === "done") {
         show = true;
         updateText.textContent = install.runtime_pending
           ? t(`업데이트 ${install.current_version} 설치 완료. 다시 시작하면 새 실행 환경(1~2분 소요)과 함께 적용됩니다.`, `Version ${install.current_version} is installed. Restart to apply it; the new runtime takes 1-2 minutes to unpack.`)
           : t(`업데이트 ${install.current_version} 설치 완료. 다시 시작하면 적용됩니다.`, `Version ${install.current_version} is installed. Restart to use it.`);
         showButtons(["restart", "later"]);
-      } else if (["starting", "checking", "downloading"].includes(install.state)) {
+      } else if (UPDATE_BUSY.includes(install.state)) {
         show = true;
         updateText.textContent = install.total
           ? t(`받는 중: ${install.label} ${mb(install.done)} / ${mb(install.total)} MB`, `Downloading ${install.label}: ${mb(install.done)} / ${mb(install.total)} MB`)
           : t("업데이트 준비 중…", "Preparing update…");
         showButtons([]);
-        progress.style.display = "block";
+        progress.hidden = false;
         bar.style.width = (install.percent || 0) + "%";
       } else if (install.state === "failed") {
         show = true;
         updateText.textContent = t("업데이트에 실패했습니다. 현재 버전은 그대로입니다: ", "Update failed; the current version is unchanged: ") + (install.error || "");
         showButtons(["install", "later"]);
+      } else if (Date.now() < upToDateUntil) {
+        show = true;
+        updateText.textContent = t("이미 최신 버전입니다.", "You already have the latest version.");
+        showButtons([]);
       } else if (check.available && !updateDismissed) {
         show = true;
         const notes = check.release_notes ? " " + String(check.release_notes).split("\n")[0].slice(0, 160) : "";
@@ -1422,10 +1441,12 @@
     // GET only: the server starts a cached check when its last one is over an hour old, so page
     // loads and restart reloads never spend GitHub's anonymous API quota (60 requests per hour).
     async function pollUpdate() {
+      const generation = updateGeneration;
       try {
         const snapshot = await api("/api/update/status");
+        if (generation !== updateGeneration) return;  // sent before 지금 업데이트; the click polls anew
         renderUpdate(snapshot);
-        const busy = ["starting", "checking", "downloading"].includes((snapshot.install || {}).state) || (snapshot.check || {}).state === "checking";
+        const busy = UPDATE_BUSY.includes((snapshot.install || {}).state) || (snapshot.check || {}).state === "checking";
         if (busy) setTimeout(pollUpdate, 1000);
       } catch (error) {
         // older server or offline: no banner
@@ -1433,11 +1454,16 @@
     }
 
     document.getElementById("updateInstall").addEventListener("click", async () => {
+      updateGeneration += 1;
+      updateRequested = true;
+      upToDateUntil = 0;
       try {
         renderUpdate(await postJson("/api/update/install"));
         setTimeout(pollUpdate, 800);
       } catch (error) {
+        updateRequested = false;
         updateText.textContent = String(error);
+        updateBanner.hidden = false;
       }
     });
     document.getElementById("updateSkip").addEventListener("click", async () => {
@@ -1450,6 +1476,9 @@
       sessionStorage.setItem("streamerCaptionUpdateLater", "1");
       updateBanner.hidden = true;
     });
+    pollUpdate();
+    setInterval(pollUpdate, 60000);
+    // ---- end update banner
 
     async function restartApp(reason) {
       if (restartPending) return;
@@ -1511,8 +1540,6 @@
       try { await postJson("/api/support/reveal", { path: bugBundle.path }); }
       catch (error) { document.getElementById("bugResult").textContent = String(error); }
     });
-    pollUpdate();
-    setInterval(pollUpdate, 60000);
 
     const requestedTheme = new URLSearchParams(location.search).get("theme");
     applyTheme(requestedTheme || localStorage.getItem("streamerCaptionAdminTheme") || "light");

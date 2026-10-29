@@ -27,6 +27,7 @@ CI_TESTS = [
     "tests/test_updater_runtime.py",
     "tests/test_release_system.py",
     "tests/test_portable_release.py",
+    "tests/test_admin_hidden_css.py",
 ]
 
 
