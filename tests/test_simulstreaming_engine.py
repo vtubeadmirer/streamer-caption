@@ -3,8 +3,9 @@
 tests/simul_fake_server.py speaks the real server's protocol (text increments, is_final,
 heartbeats) and fails the ways engines/simulstreaming/server.py can (exit codes, a stall, a
 lagging GPU). Covers the caption assembler, the client's failure detection, the route's
-start / switch / fallback / replay / retry policy, availability, the config migration and
-the full v2_light pipeline with a crash in the middle of a stream.
+start / switch / fallback / replay / retry policy, availability, the config migration, the
+full v2_light pipeline with a crash in the middle of a stream and the faster-whisper model
+loading at start.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ import numpy as np  # noqa: E402
 
 from core.audio_capture import AudioChunk, AudioSegment  # noqa: E402
 from core.config import DEFAULTS, load_config  # noqa: E402
+from core.events import CaptionEvent  # noqa: E402
 from engines.simulstreaming import availability  # noqa: E402
 from engines.simulstreaming.assembler import CaptionAssembler  # noqa: E402
 from engines.simulstreaming.client import SimulStreamingClient  # noqa: E402
@@ -869,6 +871,110 @@ def check_pipeline_dual(tmp: Path) -> None:
         "faster-whisper must not caption the microphone while SimulStreaming owns it")
 
 
+class LazyEngine:
+    """Loads its model with its first job, like BaselineEngine, and notes when jobs ran."""
+
+    name = "echo"
+
+    def __init__(self, load_sec: float) -> None:
+        self.load_sec = load_sec
+        self.job_times: list[float] = []
+        self.loaded_at: float | None = None
+
+    def on_audio_segment(self, audio: Any, sample_rate: int, audio_offset_sec: float):
+        self.job_times.append(time.monotonic())
+        if self.loaded_at is None:
+            time.sleep(self.load_sec)
+            self.loaded_at = time.monotonic()
+        yield CaptionEvent(event_type="caption_confirmed", text=f"samples={len(audio)}", confidence=1.0,
+                           audio_offset_sec=audio_offset_sec, engine=self.name)
+
+
+class SilentSource(FakeSource):
+    """Nobody speaks; notes when the audio began."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(silent(seconds))
+        self.started_at: float | None = None
+
+    def chunks(self, max_seconds: float | None = None):
+        self.started_at = time.monotonic()
+        yield from super().chunks(max_seconds)
+
+
+def check_pipeline_warmup(tmp: Path) -> None:
+    """faster-whisper loads its model at start, once, with either engine; nobody waits for it."""
+    import main
+    from core.stt_worker import SttWorker
+
+    class WatchedState(main.AdminState):
+        """Keeps every warning the admin page showed."""
+
+        def __setattr__(self, key: str, value: Any) -> None:
+            if key == "pipeline_warning" and value:
+                self.__dict__.setdefault("shown_warnings", []).append(value)
+            super().__setattr__(key, value)
+
+    def unavailable(cfg: dict[str, Any], log_dir: Any) -> SimulStreamingRoute:
+        return SimulStreamingRoute(cfg, "microphone", log_dir=log_dir, gpu_probe=lambda: None,
+                                   status_provider=lambda c: {"available": False, "reason": "runtime_missing"})
+
+    def standby(cfg: dict[str, Any], log_dir: Any) -> SimulStreamingRoute:
+        # Launches once the standby model has answered; too little GPU memory then ends it
+        # without a server.
+        return SimulStreamingRoute(cfg, "microphone", log_dir=log_dir, status_provider=lambda c: {"available": True},
+                                   gpu_probe=lambda: {"total_mib": 16380, "free_mib": 3000})
+
+    for name, make_route in (("baseline", None), ("off", unavailable), ("standby", standby)):
+        config = base_config(tmp / name)
+        config["archive"]["db_path"] = str(tmp / name / "transcripts.sqlite3")
+        config["archive"]["recap"]["provider"] = "extractive"
+        config["defense"]["blocklist_path"] = str(tmp / name / "blocklist.txt")
+        config["defense"]["whitelist_path"] = str(tmp / name / "whitelist.txt")
+        config["slang"]["dict_path"] = str(tmp / name / "slang.json")
+        config["vad"]["engine"] = "energy"
+        config["audio"]["source"] = "microphone"
+        config["streaming"]["engine"] = "baseline" if make_route is None else "simulstreaming"
+        config["streaming"]["worker_mode"] = "thread"
+        config["streaming"]["stt_stall_warn_sec"] = 0.3  # the load below counts as a slow job
+        engine = LazyEngine(load_sec=1.0)
+        source = SilentSource(2.0)
+        routes: list[SimulStreamingRoute] = []
+        states: list[WatchedState] = []
+
+        def create_route(cfg: dict[str, Any], source_names: tuple[str, ...], log_dir: Any,
+                         make_route: Any = make_route) -> SimulStreamingRoute | None:
+            if make_route is None:
+                return None
+            routes.append(make_route(cfg, log_dir))
+            return routes[-1]
+
+        originals = (main.create_audio_chunk_source, main.create_and_start_stt_worker, main.create_engine_route,
+                     main.AdminState)
+        main.create_audio_chunk_source = lambda cfg: source
+        main.create_and_start_stt_worker = lambda cfg, _engine: (_started(SttWorker(engine)), "")
+        main.create_engine_route = create_route
+        main.AdminState = lambda: states.append(WatchedState()) or states[-1]
+        try:
+            code = main.run_v2_light(config, None, None, False, False, False)
+        finally:
+            (main.create_audio_chunk_source, main.create_and_start_stt_worker, main.create_engine_route,
+             main.AdminState) = originals
+        assert code == 0, (name, code)
+        assert len(engine.job_times) == 1, (name, "one load and no other job", engine.job_times)
+        assert engine.job_times[0] <= source.started_at + 0.5, (name, "loading began at start, not with a sentence")
+        assert source.started_at < engine.loaded_at, (name, "the pipeline does not wait for the model")
+        shown = states[0].__dict__.get("shown_warnings", [])
+        assert [text for text in shown if "slow" in text], (name, shown)
+        assert "slow" not in states[0].pipeline_warning, (name, "the warning goes once the model has loaded", shown)
+        session = sorted((tmp / name / "logs").glob("*/session.jsonl"))[-1]
+        rows = [json.loads(line) for line in session.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert not [row for row in rows if row["event_type"].startswith("caption")], (name, "nothing shown for it")
+        if make_route is standby:
+            # The warm-up counted as the standby model: the route did not wait standby_timeout_sec.
+            assert routes[0].reason == "not_enough_vram", routes[0].snapshot()
+
+
 def _started(worker: Any) -> Any:
     worker.start()
     return worker
@@ -896,6 +1002,7 @@ def main() -> int:
         print("route ok", flush=True)
         check_pipeline(tmp / "pipeline")
         check_pipeline_dual(tmp / "dual")
+        check_pipeline_warmup(tmp / "warmup")
         print("pipeline ok", flush=True)
     print("simulstreaming_engine_ok")
     return 0

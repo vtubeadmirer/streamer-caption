@@ -429,19 +429,22 @@ def run_v2_light(
         admin_state.engine = baseline_engine_snapshot(config)
     else:
         admin_state.engine = simul_route.snapshot()
-        if simul_route.state == "waiting_standby":
-            # Load the faster-whisper model now: it captions while SimulStreaming loads and
-            # takes over at once if SimulStreaming fails later. The result is not shown.
-            import numpy as np
+    # Load the faster-whisper model now, in the STT worker, not with the first sentence (about
+    # 15 s late). Nothing waits for it: the overlay and admin page start at once, and captions
+    # queue behind it as they did behind the first job. With 정확 우선 it is the standby model,
+    # loaded once: it captions while SimulStreaming loads and takes over at once if
+    # SimulStreaming fails later. The result is not shown.
+    import numpy as np
 
-            standby_rate = int(source_configs[simul_route.source_name]["audio"]["sample_rate"])
-            stt_worker.submit(
-                "confirmed",
-                np.zeros(standby_rate // 2, dtype=np.float32),
-                standby_rate,
-                0.0,
-                metadata={"standby_warmup": True, "audio_source": simul_route.source_name},
-            )
+    warmup_source = simul_route.source_name if simul_route is not None else source_names[0]
+    warmup_rate = int(source_configs[warmup_source]["audio"]["sample_rate"])
+    stt_worker.submit(
+        "confirmed",
+        np.zeros(warmup_rate // 2, dtype=np.float32),
+        warmup_rate,
+        0.0,
+        metadata={"model_warmup": True, "audio_source": warmup_source},
+    )
     session_archive = SessionArchiveRecorder(
         config,
         writer,
@@ -517,7 +520,14 @@ def run_v2_light(
         )
     def emit_worker_result(result: SttResult) -> None:
         nonlocal warned_stt_job_id
-        if result.job.metadata.get("standby_warmup"):
+        if (
+            warned_stt_job_id == result.job.job_id
+            or result.job.metadata.get("recovered")
+        ):
+            # Also for the warm-up: a slow model load must not leave its warning up.
+            warned_stt_job_id = None
+            admin_state.pipeline_warning = ""
+        if result.job.metadata.get("model_warmup"):
             if simul_route is not None:
                 simul_route.standby_ready()
             return
@@ -529,12 +539,6 @@ def run_v2_light(
             "elapsed_sec": result.elapsed_sec,
             "event_count": len(result.events),
         }
-        if (
-            warned_stt_job_id == result.job.job_id
-            or result.job.metadata.get("recovered")
-        ):
-            warned_stt_job_id = None
-            admin_state.pipeline_warning = ""
         if result.job.job_type == "pending":
             tracker = preview_trackers.get(str(result.job.metadata.get("audio_source", "")))
             for event in result.events:
