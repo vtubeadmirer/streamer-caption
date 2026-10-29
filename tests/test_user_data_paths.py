@@ -146,7 +146,7 @@ def check_migration() -> None:
             "log": {"dir": OLD_SETUP + r"\logs"},
         }), encoding="utf-8")
         migrated = load_config(cfg)
-        assert CONFIG_SCHEMA == 4 and migrated["config_schema"] == CONFIG_SCHEMA, migrated["config_schema"]
+        assert CONFIG_SCHEMA == 5 and migrated["config_schema"] == CONFIG_SCHEMA, migrated["config_schema"]
         for (section, key), relative in DEFAULT_PATHS.items():
             expected = CUSTOM_DB if (section, key) == ("archive", "db_path") else relative
             assert migrated[section][key] == expected, (section, key, migrated[section][key])

@@ -42,7 +42,7 @@
     "source_stall_timeout_sec": 3.0,
     "source_retry_delay_sec": 1.0,
     "source_max_restarts": 10,
-    "system_silence_fill_sec": 0.2,
+    "system_silence_fill_sec": 1.0,
     "system_stall_restart_sec": 5.0,
     "sample_rate": 16000,
     "channels": 1,

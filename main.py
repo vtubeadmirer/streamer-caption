@@ -865,10 +865,15 @@ def run_v2_light(
                 "audio_source": chunk_source,
                 "source_restarts": source_restarts,
                 "source_last_error": source_last_error,
-                # PC sound: reopens after the loopback recorder stalled, seconds of silence filled
-                # in meanwhile, and capturing / silence / reopening / stuck / error.
+                # PC sound: reopens after the loopback recorder stalled, how often and how long
+                # silence was filled in meanwhile, SoundCard silence dropped for a reader that
+                # woke late, audio dropped to keep the clock on wall time, and capturing /
+                # silence / reopening / stuck / error.
                 "source_stall_restarts": int(getattr(input_source, "stall_restart_count", 0)),
+                "silence_fill_count": int(getattr(input_source, "silence_fill_count", 0)),
                 "silence_filled_sec": round(float(getattr(input_source, "silence_filled_sec", 0.0)), 1),
+                "false_silence_sec": round(float(getattr(input_source, "false_silence_sec", 0.0)), 1),
+                "clock_trimmed_sec": round(float(getattr(input_source, "clock_trimmed_sec", 0.0)), 1),
                 "capture_state": str(getattr(input_source, "capture_state", "")),
                 "device_label": getattr(input_source, "device_label", ""),
                 "vad_engine": getattr(
@@ -1187,7 +1192,10 @@ def run_v2_light(
                     getattr(source, "restart_count", 0)
                 ),
                 "audio_stall_restarts": int(getattr(source, "stall_restart_count", 0)),
+                "audio_silence_fill_count": int(getattr(source, "silence_fill_count", 0)),
                 "audio_silence_filled_sec": round(float(getattr(source, "silence_filled_sec", 0.0)), 1),
+                "audio_false_silence_sec": round(float(getattr(source, "false_silence_sec", 0.0)), 1),
+                "audio_clock_trimmed_sec": round(float(getattr(source, "clock_trimmed_sec", 0.0)), 1),
                 "audio_source_statuses": (
                     source.source_statuses()
                     if hasattr(source, "source_statuses")

@@ -37,7 +37,8 @@ def user_path(value: str | Path, *, root: Path | None = None) -> Path:
 # 2: Silero VAD became the default; stored "energy" from schema 1 is migrated.
 # 3: user-data paths are stored relative (see user_path); setup's absolute ones are rewritten.
 # 4: SimulStreaming (정확 우선) defaults from the 2026-10 lab runs replace the frozen experiment values.
-CONFIG_SCHEMA = 4
+# 5: PC sound waits 1 s instead of 0.2 s before filling in silence (late audio is no longer cut).
+CONFIG_SCHEMA = 5
 
 # simulstreaming values every config.json froze before schema 4 -> the measured defaults.
 _SIMULSTREAMING_SCHEMA4 = (
@@ -94,7 +95,8 @@ DEFAULTS: dict[str, Any] = {
         "source_max_restarts": 10,
         # PC sound (WASAPI loopback): when the recorder delivers nothing for this long, silent
         # blocks keep the audio clock running, and after system_stall_restart_sec it is reopened.
-        "system_silence_fill_sec": 0.2,
+        # Audio that is only late (the recorder thread woke up late) arrives within it, whole.
+        "system_silence_fill_sec": 1.0,
         "system_stall_restart_sec": 5.0,
         "sample_rate": 16000,
         "channels": 1,
@@ -450,6 +452,11 @@ def _migrate(config: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
                     simul[key] = new
             if simul.get("port") == 43007 and simul.get("start_server", True):
                 simul["port"] = 0
+    if stored_schema < 5:
+        # Every config.json froze 0.2 s, which cut PC sound that was only late; other values stay.
+        audio = config.get("audio")
+        if isinstance(audio, dict) and audio.get("system_silence_fill_sec") == 0.2:
+            audio["system_silence_fill_sec"] = DEFAULTS["audio"]["system_silence_fill_sec"]
     simul = config.get("simulstreaming")
     if isinstance(simul, dict) and simul.get("model") == "auto":
         # Development builds briefly stored "auto"; turbo is the default it meant on most PCs.

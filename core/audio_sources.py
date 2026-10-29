@@ -90,20 +90,77 @@ class LoopbackStalled(RuntimeError):
         self.seconds = seconds
 
 
+def _skip_false_silence(recorder: Any, count_skipped: Any) -> None:
+    """Keep SoundCard from reporting silence for time in which audio was arriving.
+
+    When WASAPI has no packet, SoundCard 0.4.6's _Recorder._record_chunk sleeps in steps of
+    under a millisecond, and once 40 ms have passed it returns zeros for all the time since it
+    started waiting, without looking for packets again. A reader thread that wakes late
+    (another thread held the GIL for a third of a second) thus returns zeros for audio that is
+    waiting in the buffer, and that audio right after them: silence spliced into speech, and
+    the clock that much ahead (7.5 s in a 23-minute live test). Here the zeros are kept only
+    for the time the waiting packets do not cover, less the device period the reader waits for
+    every packet anyway: before the packets when the sound started while the reader slept,
+    after them when it stopped. A recorder without those internals is left alone.
+    """
+    original = getattr(recorder, "_record_chunk", None)
+    if not (
+        callable(original)
+        and hasattr(recorder, "_idle_start_time")
+        and hasattr(recorder, "_capture_available_frames")
+    ):
+        return
+    import numpy as np
+
+    channels = max(1, len(set(getattr(recorder, "channelmap", [0]))))
+    try:
+        period_sec = float(recorder.deviceperiod[0])
+    except Exception:
+        period_sec = 0.01
+    period = int(period_sec * float(getattr(recorder, "samplerate", 0))) * channels
+
+    def record_chunk() -> Any:
+        was_silent = recorder._idle_start_time is not None  # its last chunk was zeros too
+        chunk = original()
+        if recorder._idle_start_time is None:
+            return chunk  # a packet, not SoundCard's estimate of silence
+        waiting: list[Any] = []
+        waiting_size = 0
+        while waiting_size < len(chunk) and recorder._capture_available_frames():
+            packet = original()
+            if not len(packet):
+                break
+            waiting.append(packet)
+            waiting_size += len(packet)
+        if not waiting:
+            return chunk
+        keep = max(0, len(chunk) - waiting_size - period)
+        count_skipped((len(chunk) - keep) // channels)
+        if was_silent:
+            return np.concatenate([chunk[:keep], *waiting])
+        return np.concatenate([*waiting, chunk[:keep]])
+
+    recorder._record_chunk = record_chunk
+
+
 class SystemAudioChunkSource:
     """Captures the selected Windows output device through WASAPI loopback.
 
     The recorder runs in its own thread and hands blocks over through a bounded queue, so a
-    recorder.record() call that does not return cannot stop captions. When the PC is silent,
-    SoundCard itself returns zeros within milliseconds, so a gap of a fifth of a second means the
-    call is stuck. In a real stream (2026-10-29) the app got no PC sound for three and a half
-    minutes while the streamer was talking, and the sentence before the gap was never finished.
+    recorder.record() call that does not return cannot stop captions. In a real stream
+    (2026-10-29) the app got no PC sound for three and a half minutes while the streamer was
+    talking, and the sentence before the gap was never finished. The audio clock (samples
+    handed out) has to stay on wall time as well: dual mode matches echoes by it, and VOD times
+    come from it.
 
-    * No block for system_silence_fill_sec (0.2 s): silent blocks keep the audio clock on wall
-      time, so the voice detector sees the pause and finishes the sentence. When the recorder
-      comes back it can hand over what it held back during the gap (its buffer, 256 ms at
-      16 kHz) all at once; for WALL_HOLD_SEC after the last silent block, audio that would take
-      the clock past wall time is dropped, so hangs never add up to a clock running ahead.
+    * A reader thread that wakes late finds the audio of the time it slept waiting in the
+      WASAPI buffer, which holds system_silence_fill_sec and a second more; SoundCard's zeros
+      for that time are dropped (_skip_false_silence), so late audio is never cut.
+    * No block for system_silence_fill_sec (1 s; on a silent PC SoundCard returns zeros within
+      40 ms, so the reader is stuck): silent blocks keep the clock on wall time, so the voice
+      detector sees the pause and finishes the sentence. Audio the recorder held back and hands
+      over afterwards is dropped where the silence already stood in for it: never more than was
+      filled in, and only for CATCH_UP_SEC after the first block back.
     * Still nothing after system_stall_restart_sec (5 s): the recorder is opened again
       (restart_count and stall_restart_count go up). Reopens with no audio in between wait longer
       each time, up to a minute, and never end the source. A stuck recorder thread cannot be
@@ -112,12 +169,18 @@ class SystemAudioChunkSource:
       work), and none while STUCK_READER_CEILING are stuck, so the threads left behind stay few.
     * Only errors (no device, a recorder that fails to open or read) count toward
       source_max_restarts, and that count starts over once audio flows again.
+    * Whatever else might put the clock ahead of the time since capture started, exactly silent
+      audio beyond MAX_LEAD_SEC is dropped and no silence is filled in past it.
+
+    Times are time.perf_counter(): before Python 3.13, time.monotonic() on Windows moves in
+    15.6 ms steps, more than a block.
     """
 
     source_name = "system"
     POLL_SEC = 0.05
     MAX_STALL_WAIT_SEC = 60.0
-    WALL_HOLD_SEC = 1.0
+    CATCH_UP_SEC = 1.0
+    MAX_LEAD_SEC = 0.05
     MAX_STUCK_READERS = 3
     STUCK_RETRY_SEC = 60.0
     STUCK_READER_CEILING = 8
@@ -131,7 +194,7 @@ class SystemAudioChunkSource:
         self.input_gain = float(audio.get("input_gain", 1.0))
         self.retry_delay_sec = float(audio.get("source_retry_delay_sec", 1.0))
         self.max_restarts = int(audio.get("source_max_restarts", 10))
-        self.silence_fill_sec = float(audio.get("system_silence_fill_sec", 0.2))
+        self.silence_fill_sec = float(audio.get("system_silence_fill_sec", 1.0))
         self.stall_restart_sec = float(audio.get("system_stall_restart_sec", 5.0))
         # About four seconds of blocks; when the pipeline falls behind, the oldest are dropped.
         self.queue_blocks = max(8, int(4.0 * self.sample_rate / max(1, self.block_size)))
@@ -142,23 +205,34 @@ class SystemAudioChunkSource:
         self._quiet_reopens = 0
         self._dropped_chunks = 0
         self._silence_filled_samples = 0
+        self._silence_fills = 0
+        self._filling = False
+        self._fill_debt = 0  # filled-in samples that audio held back by the recorder may cover
+        self._catch_up_until: float | None = None
+        self._false_silence_frames = 0
+        self._trimmed_samples = 0
         self._stuck: list[threading.Thread] = []
         self._reader_started_at = 0.0
         self._last_error = ""
         self._device_label = ""
         self._capture_state = "starting"
+        # Wall time since the last real audio (silence fill, held-back audio) and since capture
+        # started (the clock never runs ahead of it).
         self._anchor_time: float | None = None
         self._anchor_samples = 0
-        self._wall_hold_until = 0.0  # see _fit_to_wall_time
+        self._start_time: float | None = None
+        self._start_samples = 0
 
     def chunks(
         self,
         max_seconds: float | None = None,
         stop_event: threading.Event | None = None,
     ) -> Any:
-        started = time.monotonic()
+        started = time.perf_counter()
         deadline = None if max_seconds is None else started + max_seconds
         self._anchor_time, self._anchor_samples = started, self._sample_count
+        self._start_time, self._start_samples = started, self._sample_count
+        self._fill_debt = 0
         while not self._should_stop(deadline, stop_event):
             try:
                 yield from self._capture(deadline, stop_event)
@@ -181,7 +255,7 @@ class SystemAudioChunkSource:
                         f"system audio recovery failed after {self.max_restarts} restarts: {exc}"
                     ) from exc
                 yield from self._wait_until(
-                    time.monotonic() + self.retry_delay_sec, deadline, stop_event
+                    time.perf_counter() + self.retry_delay_sec, deadline, stop_event
                 )
 
     def _capture(self, deadline: float | None, stop_event: threading.Event | None) -> Any:
@@ -190,8 +264,8 @@ class SystemAudioChunkSource:
         yield from self._wait_for_stuck_readers(deadline, stop_event)
         if self._should_stop(deadline, stop_event):
             return
-        yield from self._fill_silence(time.monotonic())  # time spent closing a stalled recorder
-        blocks: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=self.queue_blocks)
+        yield from self._fill_silence(time.perf_counter())  # time spent closing a stalled recorder
+        blocks: queue.Queue[tuple[str, Any, float]] = queue.Queue(maxsize=self.queue_blocks)
         reader_stop = threading.Event()
         reader = threading.Thread(
             target=self._read_blocks,
@@ -200,34 +274,32 @@ class SystemAudioChunkSource:
             daemon=True,
         )
         reader.start()
-        waiting_since = self._reader_started_at = time.monotonic()
+        waiting_since = self._reader_started_at = time.perf_counter()
         try:
             while not self._should_stop(deadline, stop_event):
                 try:
-                    kind, payload = blocks.get(timeout=self.POLL_SEC)
+                    kind, payload, read_at = blocks.get(timeout=self.POLL_SEC)
                 except queue.Empty:
-                    kind, payload = "", None
-                now = time.monotonic()
+                    kind, payload, read_at = "", None, 0.0
+                now = time.perf_counter()
                 if kind == "error":
                     raise payload
                 if kind == "opened":
-                    waiting_since = now
+                    waiting_since = read_at
                     continue
                 if kind == "data":
-                    waiting_since = now
+                    # Timed by when the reader got the block: a pipeline thread that is busy
+                    # for a while must not make the recorder look late.
+                    waiting_since = read_at
                     self._error_streak = 0
                     self._quiet_reopens = 0
                     self._capture_state = "capturing"
-                    # Right after a silence fill, wall time still counts from the audio before
-                    # the gap, and what the recorder hands over must fit before it.
-                    held = now < self._wall_hold_until
-                    if held:
-                        payload = self._fit_to_wall_time(payload, now)
-                        if payload is None:
-                            continue
-                    yield self._audio_chunk(payload)
-                    if not held:
-                        self._anchor_time, self._anchor_samples = time.monotonic(), self._sample_count
+                    samples = self._fit_to_wall_time(self._mono(payload), read_at)
+                    if len(samples):
+                        yield self._chunk(samples, status="")
+                        self._filling = False
+                    if not self._fill_debt:
+                        self._anchor_time, self._anchor_samples = read_at, self._sample_count
                     continue
                 gap = now - waiting_since
                 if gap >= self.silence_fill_sec:
@@ -258,20 +330,20 @@ class SystemAudioChunkSource:
                 return
             if (
                 len(self._stuck) < self.STUCK_READER_CEILING
-                and time.monotonic() - self._reader_started_at >= self.STUCK_RETRY_SEC
+                and time.perf_counter() - self._reader_started_at >= self.STUCK_RETRY_SEC
             ):
                 self._capture_state = "reopening"
                 return
             self._capture_state = "stuck"
             time.sleep(self.POLL_SEC)
-            yield from self._fill_silence(time.monotonic())
+            yield from self._fill_silence(time.perf_counter())
 
     def _wait_until(
         self, until: float, deadline: float | None, stop_event: threading.Event | None
     ) -> Any:
-        while time.monotonic() < until and not self._should_stop(deadline, stop_event):
+        while time.perf_counter() < until and not self._should_stop(deadline, stop_event):
             time.sleep(self.POLL_SEC)
-            yield from self._fill_silence(time.monotonic())
+            yield from self._fill_silence(time.perf_counter())
 
     def _read_blocks(self, blocks: queue.Queue, stop: threading.Event) -> None:
         import numpy as np
@@ -279,12 +351,20 @@ class SystemAudioChunkSource:
         try:
             device = _select_loopback_device(self.device)
             self._device_label = str(getattr(device, "name", _device_id(device)))
-            recorder_blocksize = max(4096, self.block_size * 4)
+            # SoundCard sizes the WASAPI buffer as blocksize / samplerate. It keeps what a reader
+            # that wakes late has not picked up yet: up to system_silence_fill_sec and a second
+            # more, so audio that is only late is never lost (it used to hold 256 ms).
+            recorder_blocksize = max(
+                4096,
+                self.block_size * 4,
+                int(self.sample_rate * (self.silence_fill_sec + 1.0)),
+            )
             with device.recorder(
                 samplerate=self.sample_rate,
                 blocksize=recorder_blocksize,
             ) as recorder:
-                self._offer(blocks, ("opened", None))
+                _skip_false_silence(recorder, self._count_false_silence)
+                self._offer(blocks, ("opened", None, time.perf_counter()))
                 while not stop.is_set():
                     data = np.asarray(
                         recorder.record(numframes=self.block_size),
@@ -294,12 +374,15 @@ class SystemAudioChunkSource:
                         return
                     if data.size == 0:
                         raise RuntimeError("system loopback returned an empty audio block")
-                    self._offer(blocks, ("data", data))
+                    self._offer(blocks, ("data", data, time.perf_counter()))
         except Exception as exc:
             if not stop.is_set():
-                self._offer(blocks, ("error", exc))
+                self._offer(blocks, ("error", exc, time.perf_counter()))
 
-    def _offer(self, blocks: queue.Queue, item: tuple[str, Any]) -> None:
+    def _count_false_silence(self, frames: int) -> None:
+        self._false_silence_frames += frames
+
+    def _offer(self, blocks: queue.Queue, item: tuple[str, Any, float]) -> None:
         """Never blocks the reader: when the queue is full, the oldest block is dropped."""
         try:
             blocks.put_nowait(item)
@@ -316,7 +399,7 @@ class SystemAudioChunkSource:
         except queue.Full:
             self._dropped_chunks += 1
 
-    def _audio_chunk(self, data: Any) -> AudioChunk:
+    def _mono(self, data: Any) -> Any:
         import numpy as np
 
         if data.ndim == 1:
@@ -326,33 +409,63 @@ class SystemAudioChunkSource:
             mono = np.mean(data, axis=1, dtype=np.float32)
         if self.input_gain != 1.0:
             mono = np.clip(mono * self.input_gain, -1.0, 1.0).astype(np.float32)
-        return self._chunk(mono.astype(np.float32, copy=True), status="")
+        return mono.astype(np.float32, copy=True)
 
     def _fill_silence(self, now: float) -> Any:
         """Silent blocks up to wall time since the last real audio."""
         import numpy as np
 
-        target = self._wall_sample_count(now)
+        target = min(self._wall_sample_count(now), self._clock_limit(now))
         while self._sample_count + self.block_size <= target:
+            if not self._filling:
+                self._filling = True
+                self._silence_fills += 1
             self._silence_filled_samples += self.block_size
-            self._wall_hold_until = now + self.WALL_HOLD_SEC
+            self._fill_debt += self.block_size
+            self._catch_up_until = None
             yield self._chunk(np.zeros(self.block_size, dtype=np.float32), status="silence_fill")
 
-    def _fit_to_wall_time(self, data: Any, now: float) -> Any | None:
-        """The newest part of a block that still fits before wall time, None when none does.
+    def _fit_to_wall_time(self, samples: Any, read_at: float) -> Any:
+        """The part of a block that keeps the audio clock on wall time (maybe all, maybe none).
 
-        Used for WALL_HOLD_SEC after silence was filled in: the recorder may then hand over audio
-        it held back during the gap. Placed after the silence, it would put the clock ahead of
-        wall time, a little further with every hang (dual-mode echo matching and VOD times)."""
-        room = self._wall_sample_count(now) - self._sample_count
-        if room >= len(data):
-            return data
-        return data[len(data) - room:] if room > 0 else None
+        After silence was filled in, the recorder may hand over audio it held back during the
+        gap. Placed after the silence it would put the clock ahead of wall time, a little further
+        with every hang, so its oldest part is dropped as far as the silence already stood in for
+        it: never more than was filled in, and only until CATCH_UP_SEC after the first block
+        back (what a reopened recorder delivers is new). Wall time still counts from the audio
+        before the gap until then."""
+        if self._fill_debt:
+            if self._catch_up_until is None:
+                self._catch_up_until = read_at + self.CATCH_UP_SEC
+            if read_at < self._catch_up_until:
+                ahead = self._sample_count + len(samples) - self._wall_sample_count(read_at)
+                drop = min(max(0, ahead), self._fill_debt, len(samples))
+                self._fill_debt -= drop
+                self._trimmed_samples += drop
+                samples = samples[drop:]
+            else:
+                self._fill_debt = 0
+        ahead = (
+            self._sample_count
+            + len(samples)
+            - self._clock_limit(read_at)
+            - int(self.MAX_LEAD_SEC * self.sample_rate)
+        )
+        if ahead > 0 and not samples.any():
+            keep = max(0, len(samples) - ahead)
+            self._trimmed_samples += len(samples) - keep
+            samples = samples[:keep]
+        return samples
 
     def _wall_sample_count(self, now: float) -> int:
         """The sample count at `now` had audio kept coming in real time since the anchor."""
         anchor = self._anchor_time if self._anchor_time is not None else now
         return self._anchor_samples + int((now - anchor) * self.sample_rate)
+
+    def _clock_limit(self, now: float) -> int:
+        """The sample count at `now` had audio come in real time since capture started."""
+        start = self._start_time if self._start_time is not None else now
+        return self._start_samples + int((now - start) * self.sample_rate)
 
     def _chunk(self, mono: Any, *, status: str) -> AudioChunk:
         import numpy as np
@@ -372,7 +485,7 @@ class SystemAudioChunkSource:
 
     @staticmethod
     def _should_stop(deadline: float | None, stop_event: threading.Event | None) -> bool:
-        return (deadline is not None and time.monotonic() >= deadline) or (
+        return (deadline is not None and time.perf_counter() >= deadline) or (
             stop_event is not None and stop_event.is_set()
         )
 
@@ -395,6 +508,21 @@ class SystemAudioChunkSource:
     @property
     def silence_filled_sec(self) -> float:
         return self._silence_filled_samples / self.sample_rate
+
+    @property
+    def silence_fill_count(self) -> int:
+        """How often silence was filled in because the recorder delivered nothing."""
+        return self._silence_fills
+
+    @property
+    def false_silence_sec(self) -> float:
+        """SoundCard silence dropped because the audio of that time arrived after all."""
+        return self._false_silence_frames / self.sample_rate
+
+    @property
+    def clock_trimmed_sec(self) -> float:
+        """Audio dropped to keep the clock on wall time (held back after a fill, or silence)."""
+        return self._trimmed_samples / self.sample_rate
 
     @property
     def capture_state(self) -> str:
@@ -558,6 +686,27 @@ class DualAudioChunkSource:
         )
 
     @property
+    def silence_fill_count(self) -> int:
+        return sum(
+            int(getattr(source, "silence_fill_count", 0))
+            for source in self._sources.values()
+        )
+
+    @property
+    def false_silence_sec(self) -> float:
+        return sum(
+            float(getattr(source, "false_silence_sec", 0.0))
+            for source in self._sources.values()
+        )
+
+    @property
+    def clock_trimmed_sec(self) -> float:
+        return sum(
+            float(getattr(source, "clock_trimmed_sec", 0.0))
+            for source in self._sources.values()
+        )
+
+    @property
     def last_error(self) -> str:
         messages = [
             f"{name}: {message}"
@@ -584,9 +733,14 @@ class DualAudioChunkSource:
                 "dropped_chunks": int(getattr(source, "dropped_chunks", 0)),
                 "device_label": str(getattr(source, "device_label", "")),
                 # PC sound only (SystemAudioChunkSource): reopens after the recorder stalled,
-                # seconds of silence filled in while it delivered nothing, and its state.
+                # how often and how long silence was filled in while it delivered nothing,
+                # SoundCard silence dropped for a reader that woke late, audio dropped to keep
+                # the clock on wall time, and its state.
                 "stall_restart_count": int(getattr(source, "stall_restart_count", 0)),
+                "silence_fill_count": int(getattr(source, "silence_fill_count", 0)),
                 "silence_filled_sec": round(float(getattr(source, "silence_filled_sec", 0.0)), 1),
+                "false_silence_sec": round(float(getattr(source, "false_silence_sec", 0.0)), 1),
+                "clock_trimmed_sec": round(float(getattr(source, "clock_trimmed_sec", 0.0)), 1),
                 "capture_state": str(getattr(source, "capture_state", "")),
             }
             for name, source in self._sources.items()
