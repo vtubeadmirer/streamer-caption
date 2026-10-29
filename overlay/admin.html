@@ -770,9 +770,21 @@
           ? uiText("음성 감지", "voice")
           : uiText("조용함", "quiet"));
       const inputParts = [sourceLabel, inputState];
+      // PC sound recorder (core/audio_sources.py): silence is filled in while it delivers
+      // nothing; these states mean it is being reopened or does not answer.
+      const captureNote = {
+        reopening: uiText("PC 소리 다시 여는 중", "reopening PC sound"),
+        stuck: uiText("PC 소리 장치 응답 없음", "PC sound device not responding"),
+        error: uiText("PC 소리 장치 오류", "PC sound device error"),
+      }[audio.capture_state];
+      if (captureNote) {
+        inputParts.push(captureNote);
+      }
+      const stalls = Number(audio.source_stall_restarts || 0);
       if (restarts) {
         inputParts.push(
           uiText("입력 재시작 ", "input restarts ") + restarts
+          + (stalls ? uiText(" (끊김 ", " (stalls ") + stalls + ")" : "")
         );
       }
       document.getElementById("micState").textContent =

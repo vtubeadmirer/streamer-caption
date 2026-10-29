@@ -92,6 +92,10 @@ DEFAULTS: dict[str, Any] = {
         "source_stall_timeout_sec": 3.0,
         "source_retry_delay_sec": 1.0,
         "source_max_restarts": 10,
+        # PC sound (WASAPI loopback): when the recorder delivers nothing for this long, silent
+        # blocks keep the audio clock running, and after system_stall_restart_sec it is reopened.
+        "system_silence_fill_sec": 0.2,
+        "system_stall_restart_sec": 5.0,
         "sample_rate": 16000,
         "channels": 1,
         "block_size": 1024,
@@ -278,6 +282,8 @@ CONFIG_LIFETIME: dict[str, str] = {
     "whisper.no_repeat_ngram_size": "cold",
     "audio.source": "cold",
     "audio.system_device": "cold",
+    "audio.system_silence_fill_sec": "cold",
+    "audio.system_stall_restart_sec": "cold",
     "audio.device": "cold",
     "audio.vad_energy_threshold": "cold",
     "audio.input_gain": "cold",
@@ -541,6 +547,8 @@ def validate_config(config: dict[str, Any]) -> None:
     _bounded_number(config, "audio", "source_stall_timeout_sec", 1, 30)
     _bounded_number(config, "audio", "source_retry_delay_sec", 0.1, 30)
     _bounded_number(config, "audio", "source_max_restarts", 0, 100)
+    _bounded_number(config, "audio", "system_silence_fill_sec", 0.05, 2)
+    _bounded_number(config, "audio", "system_stall_restart_sec", 1, 60)
     _bounded_number(config, "audio", "sample_rate", 8000, 96000)
     _bounded_number(config, "audio", "block_size", 128, 8192)
     _bounded_number(config, "audio", "vad_energy_threshold", 0, 1)

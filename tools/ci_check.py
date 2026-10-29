@@ -29,6 +29,7 @@ CI_TESTS = [
     "tests/test_portable_release.py",
     "tests/test_admin_hidden_css.py",
     "tests/test_hallucination_phrases.py",
+    "tests/test_system_audio_stall.py",
 ]
 
 

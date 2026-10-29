@@ -148,6 +148,7 @@ STRUCTURAL_KEYS = frozenset({
     "worker_mode", "worker_fallback", "runtime_vad_override", "process_state", "job_type",
     "active_job_type", "stt_job_type", "recovery_source", "audio_source", "audio_mode",
     "source_priority", "duplicate_source", "defense_reason", "defense_signals",
+    "capture_state",
     # caption engine choice and fallback state (engines/simulstreaming/route.py)
     "requested_engine", "active_engine", "caption_engine", "model_setting", "engine_model",
 })
