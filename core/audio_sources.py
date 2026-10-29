@@ -100,7 +100,10 @@ class SystemAudioChunkSource:
     minutes while the streamer was talking, and the sentence before the gap was never finished.
 
     * No block for system_silence_fill_sec (0.2 s): silent blocks keep the audio clock on wall
-      time, so the voice detector sees the pause and finishes the sentence.
+      time, so the voice detector sees the pause and finishes the sentence. When the recorder
+      comes back it can hand over what it held back during the gap (its buffer, 256 ms at
+      16 kHz) all at once; for WALL_HOLD_SEC after the last silent block, audio that would take
+      the clock past wall time is dropped, so hangs never add up to a clock running ahead.
     * Still nothing after system_stall_restart_sec (5 s): the recorder is opened again
       (restart_count and stall_restart_count go up). Reopens with no audio in between wait longer
       each time, up to a minute, and never end the source. A stuck recorder thread cannot be
@@ -112,6 +115,7 @@ class SystemAudioChunkSource:
     source_name = "system"
     POLL_SEC = 0.05
     MAX_STALL_WAIT_SEC = 60.0
+    WALL_HOLD_SEC = 1.0
     MAX_STUCK_READERS = 3
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -140,6 +144,7 @@ class SystemAudioChunkSource:
         self._capture_state = "starting"
         self._anchor_time: float | None = None
         self._anchor_samples = 0
+        self._wall_hold_until = 0.0  # see _fit_to_wall_time
 
     def chunks(
         self,
@@ -208,8 +213,16 @@ class SystemAudioChunkSource:
                     self._error_streak = 0
                     self._quiet_reopens = 0
                     self._capture_state = "capturing"
+                    # Right after a silence fill, wall time still counts from the audio before
+                    # the gap, and what the recorder hands over must fit before it.
+                    held = now < self._wall_hold_until
+                    if held:
+                        payload = self._fit_to_wall_time(payload, now)
+                        if payload is None:
+                            continue
                     yield self._audio_chunk(payload)
-                    self._anchor_time, self._anchor_samples = time.monotonic(), self._sample_count
+                    if not held:
+                        self._anchor_time, self._anchor_samples = time.monotonic(), self._sample_count
                     continue
                 gap = now - waiting_since
                 if gap >= self.silence_fill_sec:
@@ -308,11 +321,27 @@ class SystemAudioChunkSource:
         """Silent blocks up to wall time since the last real audio."""
         import numpy as np
 
-        anchor = self._anchor_time if self._anchor_time is not None else now
-        target = self._anchor_samples + int((now - anchor) * self.sample_rate)
+        target = self._wall_sample_count(now)
         while self._sample_count + self.block_size <= target:
             self._silence_filled_samples += self.block_size
+            self._wall_hold_until = now + self.WALL_HOLD_SEC
             yield self._chunk(np.zeros(self.block_size, dtype=np.float32), status="silence_fill")
+
+    def _fit_to_wall_time(self, data: Any, now: float) -> Any | None:
+        """The newest part of a block that still fits before wall time, None when none does.
+
+        Used for WALL_HOLD_SEC after silence was filled in: the recorder may then hand over audio
+        it held back during the gap. Placed after the silence, it would put the clock ahead of
+        wall time, a little further with every hang (dual-mode echo matching and VOD times)."""
+        room = self._wall_sample_count(now) - self._sample_count
+        if room >= len(data):
+            return data
+        return data[len(data) - room:] if room > 0 else None
+
+    def _wall_sample_count(self, now: float) -> int:
+        """The sample count at `now` had audio kept coming in real time since the anchor."""
+        anchor = self._anchor_time if self._anchor_time is not None else now
+        return self._anchor_samples + int((now - anchor) * self.sample_rate)
 
     def _chunk(self, mono: Any, *, status: str) -> AudioChunk:
         import numpy as np

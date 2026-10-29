@@ -6,6 +6,8 @@ before the gap was never finished. The recorder now runs in its own thread, and 
 it with a fake recorder that delivers audio in real time, hangs and resumes:
 
 * a gap of 0.2 s or more is filled with silent blocks, so the audio clock stays on wall time;
+  audio the recorder held back during the gap and hands over at once afterwards never takes
+  the clock past wall time, however many hangs there are;
 * after system_stall_restart_sec the recorder is opened again, however often it happens, without
   ending the source (a quiet or sleeping output device is not broken), and no more than
   MAX_STUCK_READERS recorder threads are ever left stuck in the driver;
@@ -36,7 +38,8 @@ BLOCK = 160  # 10 ms
 
 
 class FakeRecorder:
-    """Steps: ("data", seconds or None, value) in real time, ("hang", seconds or None for
+    """Steps: ("data", seconds or None, value) in real time, ("burst", seconds, value) all at
+    once (what the driver held back during a hang), ("hang", seconds or None for
     "until device.release"), ("error", message)."""
 
     def __init__(self, device: "FakeDevice", steps: list[tuple]) -> None:
@@ -44,6 +47,7 @@ class FakeRecorder:
         self.steps = list(steps)
         self.t0: float | None = None
         self.delivered = 0
+        self.burst_sent = 0
 
     def __enter__(self) -> "FakeRecorder":
         self.device.opened += 1
@@ -68,6 +72,13 @@ class FakeRecorder:
             if kind == "error":
                 message = self.steps.pop(0)[1]
                 raise RuntimeError(message)
+            if kind == "burst":
+                _, seconds, value = self.steps[0]
+                self.burst_sent += numframes
+                if self.burst_sent >= seconds * SR:
+                    self.steps.pop(0)
+                    self.burst_sent = 0
+                return np.full((numframes, 2), value, dtype=np.float32)
             _, seconds, value = self.steps[0]
             now = time.monotonic()
             if self.t0 is None:
@@ -216,6 +227,36 @@ def check_short_gap_is_filled_with_silence() -> None:
     assert source.restart_count == 0 and source.stall_restart_count == 0
     assert device.opened == 1 and source.capture_state == "capturing"
     assert wait_for(lambda: device.closed == 1)
+
+
+def check_held_back_audio_never_runs_the_clock_ahead() -> None:
+    # After each hang the recorder hands over 0.25 s it held back, all at once. Placed after the
+    # filled silence it would put the clock 0.25 s further ahead of wall time with every hang.
+    steps: list[tuple] = []
+    for _ in range(3):
+        steps += [("data", 0.3, 0.5), ("hang", 0.45), ("burst", 0.25, 0.9)]
+    device = FakeDevice(steps + [("data", None, 0.5)])
+    install(device)
+    source = SystemAudioChunkSource(make_config())
+    chunks: list[AudioChunk] = []
+    ahead = []
+    started = time.monotonic()
+    for chunk in source.chunks(max_seconds=3.0):
+        chunks.append(chunk)
+        ahead.append(chunk.offset_sec + chunk.duration_sec - (time.monotonic() - started))
+    elapsed = time.monotonic() - started
+    assert max(ahead) <= 0.05, max(ahead)  # timer resolution; without the fix about 0.7 s
+    statuses = [status for status, _ in runs(chunks)]
+    assert statuses.count("silence_fill") == 3, runs(chunks)
+    kept = sum(chunk.duration_sec for chunk in chunks if chunk.status == "" and np.allclose(chunk.samples, 0.9))
+    assert kept <= 0.25, kept  # of 0.75 s held back: only what fit before wall time
+    assert all(np.allclose(chunk.samples, 0.5) or np.allclose(chunk.samples, 0.9)
+               for chunk in chunks if chunk.status == "")
+    assert_contiguous(chunks)
+    assert_on_wall_time(source, elapsed, 0.2)
+    # Real-time audio after the burst was kept: the run ends on the steady 0.5 data.
+    assert np.allclose(chunks[-1].samples, 0.5) and source.capture_state == "capturing"
+    assert source.restart_count == 0 and device.opened == 1
 
 
 def check_long_stall_reopens_the_recorder() -> None:
@@ -394,6 +435,7 @@ def main() -> int:
     try:
         check_config()
         check_short_gap_is_filled_with_silence()
+        check_held_back_audio_never_runs_the_clock_ahead()
         check_long_stall_reopens_the_recorder()
         check_quiet_device_never_ends_the_source()
         check_stuck_readers_are_capped()
