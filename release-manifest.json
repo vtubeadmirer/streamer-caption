@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "1.2.2",
+  "version": "1.3.0",
   "channel": "stable",
   "asset_name": "",
   "sha256": "",
@@ -9,7 +9,7 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "시작 창의 업데이트 안내 한글 깨짐 수정. 1.2.1의 의존성 업데이트와 새 실행 환경 py312-v3 포함.",
+  "release_notes": "회색 미리보기 자막 정확도 개선(엉뚱한 미리보기·\"감사합니다\" 헛자막 제거, 두 번 연속 같은 부분은 흰 글씨). PC 소리 모드에서 조용해진 뒤 인식이 멈추던 문제와 말 중간에 무음이 끼던 문제 수정. \"자막\"이 들어간 정상 문장이 숨겨지던 문제 수정. 켠 직후 첫 자막이 늦던 문제 수정. 방송 검증 페이지에서 저장한 표시를 나중에 고칠 수 있음. 업데이트 안내가 사라지지 않던 문제 수정.",
   "runtime_asset_name": "runtime-py312-v3.zip",
   "runtime_sha256": "",
   "runtime_size": 0,
