@@ -108,7 +108,11 @@ class PendingWindowScheduler:
         self.chunk_overlap_sec = float(streaming.get("chunk_overlap_sec", 0.0))
         self.pending_debounce_sec = float(streaming["pending_debounce_sec"])
         self.pending_min_utterance_sec = float(streaming.get("pending_min_utterance_sec", 1.2))
-        self.pending_max_window_sec = float(streaming.get("pending_max_window_sec", 6.0))
+        # A window cannot reach further back than the ring keeps audio (buffer_max_sec may be 5).
+        self.pending_max_window_sec = min(
+            float(streaming.get("pending_max_window_sec", 6.0)),
+            float(streaming["buffer_max_sec"]),
+        )
         self.ring = AudioRingBuffer(
             sample_rate=self.sample_rate,
             max_seconds=float(streaming["buffer_max_sec"]),

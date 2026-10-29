@@ -610,9 +610,8 @@ def validate_config(config: dict[str, Any]) -> None:
     _bounded_number(config, "streaming", "buffer_max_sec", 5, 300)
     _bounded_number(config, "streaming", "pending_debounce_sec", 0.05, 10)
     _bounded_number(config, "streaming", "pending_min_utterance_sec", 0, 5)
-    max_window = _bounded_number(config, "streaming", "pending_max_window_sec", 1, 30)
-    if max_window > float(config["streaming"]["buffer_max_sec"]):
-        raise ValueError("streaming.pending_max_window_sec cannot exceed streaming.buffer_max_sec")
+    # May exceed buffer_max_sec (5 s is allowed): PendingWindowScheduler caps it at the buffer.
+    _bounded_number(config, "streaming", "pending_max_window_sec", 1, 30)
     _bounded_number(config, "streaming", "pending_queue_max", 1, 20)
     _bounded_number(config, "streaming", "pending_min_chars", 1, 100)
     _bounded_number(config, "streaming", "pending_stale_sec", 0.25, 60)

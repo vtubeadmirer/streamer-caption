@@ -11,6 +11,7 @@ import copy
 import math
 from pathlib import Path
 import sys
+import tempfile
 
 import numpy as np
 
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.audio_capture import AudioChunk  # noqa: E402
-from core.config import DEFAULTS, validate_config  # noqa: E402
+from core.config import DEFAULTS, save_config, validate_config  # noqa: E402
 from core.streaming import PendingWindowScheduler  # noqa: E402
 
 STEP = 0.1  # seconds per chunk
@@ -86,6 +87,14 @@ def check_config() -> None:
         except ValueError:
             continue
         raise AssertionError(f"streaming.{key}={value} must be rejected")
+    # buffer_max_sec may be 5 while the window is 6 s: settings still save (the admin page goes
+    # through save_config) and the scheduler caps the window at the buffer.
+    small_buffer = copy.deepcopy(config)
+    small_buffer["streaming"]["buffer_max_sec"] = 5
+    validate_config(small_buffer)
+    with tempfile.TemporaryDirectory() as tmp:
+        save_config(small_buffer, Path(tmp) / "config.json")
+    assert PendingWindowScheduler(small_buffer).pending_max_window_sec == 5.0
 
 
 def check_short_utterance_has_no_preview() -> None:
@@ -134,6 +143,18 @@ def check_long_utterance_folds_at_a_pause() -> None:
         assert close(action.metadata["utterance_start_offset_sec"], 0.2)
 
 
+def check_window_is_capped_at_the_buffer() -> None:
+    # A 5 s buffer with the 6 s default: past 5 s the window starts again at the pause (1.0 s)
+    # instead of wherever the buffer happens to begin.
+    pattern = [0.0] * 5 + [0.08] * 5 + [0.0] * 2 + [0.08] * 60 + [0.0] * 8
+    pending, confirmed = run(make_config(buffer_max_sec=5.0), pattern)
+    assert len(confirmed) == 1
+    starts = sorted({round(action.window.start_offset_sec, 3) for _, action in pending})
+    assert 1.0 in starts, starts
+    for _, action in pending:
+        assert action.window.duration_sec <= 5.0 + 1e-6, action.window.duration_sec
+
+
 def check_long_utterance_without_pause_slides() -> None:
     pending, _ = run(make_config(pending_max_window_sec=3.0), [0.0] * 5 + [0.08] * 60 + [0.0] * 8)
     late = [action for at, action in pending if at > 0.2 + 3.0 + 0.3]
@@ -167,6 +188,7 @@ def main() -> int:
     check_short_utterance_has_no_preview()
     check_window_grows_from_the_utterance_start()
     check_long_utterance_folds_at_a_pause()
+    check_window_is_capped_at_the_buffer()
     check_long_utterance_without_pause_slides()
     check_new_utterance_gets_a_new_id()
     check_old_style_short_windows_still_possible()
