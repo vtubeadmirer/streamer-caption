@@ -2,6 +2,7 @@
 before every published release. tools/final_check.py is the superset run on the dev PC."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -38,10 +39,19 @@ CI_TESTS = [
 def main() -> int:
     failed: list[str] = []
     for test in CI_TESTS:
-        result = subprocess.run([sys.executable, test], cwd=ROOT)
+        result = subprocess.run(
+            [sys.executable, test], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        print(output, end="", flush=True)
         print(f"{test}: rc={result.returncode}", flush=True)
         if result.returncode:
             failed.append(test)
+            if os.environ.get("GITHUB_ACTIONS"):
+                # Annotations are readable without signing in, unlike job logs.
+                tail = "\n".join(output.splitlines()[-40:])
+                tail = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                print(f"::error title={test} failed::{tail}", flush=True)
     if failed:
         print("CI_CHECK_FAILED:", ", ".join(failed))
         return 1
