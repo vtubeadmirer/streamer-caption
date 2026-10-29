@@ -105,6 +105,18 @@ def check_assembler() -> None:
     # Empty updates and repeated finals add nothing.
     assert a.push({"is_final": False}) == [] and a.push({"is_final": True}) == []
 
+    # Every line knows when its first word began: run_v2_light measures that audio's speech share.
+    s = CaptionAssembler(max_chars=28)
+    out = s.push({"text": " 오늘은", "end": 0.9, "is_final": False, "words": [{"text": " 오늘은", "start": 0.4, "end": 0.9}]})
+    assert [(o.kind, o.start_sec, o.end_sec) for o in out] == [("pending", 0.4, 0.9)], out
+    out = s.push({"text": " 좋네요. 그래서", "end": 2.4, "is_final": False,
+                  "words": [{"text": " 좋네요.", "start": 1.2, "end": 1.9}, {"text": " 그래서", "start": 2.1, "end": 2.4}]})
+    assert [(o.kind, o.text, o.start_sec, o.end_sec) for o in out] == [
+        ("confirmed", "오늘은 좋네요.", 0.4, 1.9), ("pending", "그래서", 2.1, 2.4)], out
+    assert [(o.text, o.start_sec) for o in s.flush()] == [("그래서", 2.1)]
+    assert CaptionAssembler().push({"text": " 네", "end": 0.5, "is_final": False})[0].start_sec is None
+    assert CaptionAssembler().push({"text": " 네", "start": 0.2, "end": 0.5, "is_final": False})[0].start_sec == 0.2
+
     # A long line is committed between words before it outgrows one caption line.
     b = CaptionAssembler(max_chars=12)
     pieces = []
@@ -755,6 +767,11 @@ def check_pipeline(tmp: Path) -> None:
     assert simul and pending and all(row["metadata"].get("stable") for row in pending), (len(simul), len(pending))
     assert echo, "faster-whisper (echo) must caption while SimulStreaming is down"
     assert all(row["metadata"]["audio_source"] == "microphone" for row in simul + echo)
+    # Each 정확 우선 line carries the voice detector's speech share of its audio (defense evidence);
+    # the fake server's words fall on the voiced bursts.
+    shares = [row["metadata"].get("speech_share") for row in simul + pending]
+    assert all(isinstance(share, float) and 0.0 <= share <= 1.0 for share in shares), shares
+    assert sorted(shares)[len(shares) // 2] >= 0.5, shares
     assert not [row for row in rows if row["event_type"] == "engine_error"], "no engine_error rows"
     summary = [row for row in rows if row["event_type"] == "engine_status" and row["text"] == "v2_light session summary"]
     assert summary and summary[-1]["metadata"]["caption_engine"]["fallbacks"] >= 1, summary

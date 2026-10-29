@@ -137,7 +137,8 @@
     "short_utterance_min_confidence": 0.72,
     "short_utterance_voice_ratio_floor": 0.02,
     "repeat_window_sec": 45,
-    "repeat_limit": 2
+    "repeat_limit": 2,
+    "phantom_max_speech_share": 0.3
   },
   "server": {
     "host": "127.0.0.1",

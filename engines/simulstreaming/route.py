@@ -375,16 +375,24 @@ class SimulStreamingRoute:
         assert self.assembler is not None
         for message in messages:
             for piece in self.assembler.push(message):
-                self._emit(piece.kind, piece.text, piece.end_sec, piece.segment, message)
+                self._emit(piece.kind, piece.text, piece.end_sec, piece.segment, message, piece.start_sec)
         self._prune_held()
 
     def _commit_line(self) -> None:
         if self.assembler is None:
             return
         for piece in self.assembler.flush():
-            self._emit(piece.kind, piece.text, piece.end_sec, piece.segment, {})
+            self._emit(piece.kind, piece.text, piece.end_sec, piece.segment, {}, piece.start_sec)
 
-    def _emit(self, kind: str, text: str, end_sec: float, segment: int, message: dict[str, Any]) -> None:
+    def _emit(
+        self,
+        kind: str,
+        text: str,
+        end_sec: float,
+        segment: int,
+        message: dict[str, Any],
+        start_sec: float | None = None,
+    ) -> None:
         if not text:
             return
         offset = max(self.origin_offset + float(end_sec), self._last_offset + 0.001)
@@ -398,7 +406,12 @@ class SimulStreamingRoute:
             "simulstreaming_end_sec": round(float(end_sec), 3),
             "simulstreaming_emission_time": message.get("emission_time"),
             "engine_model": self.model,
+            # The line's audio on the source clock: run_v2_light measures how much of it the
+            # app's voice detector heard as speech (DefenseFilter's speech_share).
+            "line_end_offset_sec": round(self.origin_offset + float(end_sec), 3),
         }
+        if start_sec is not None and float(start_sec) <= float(end_sec):
+            metadata["line_start_offset_sec"] = round(self.origin_offset + float(start_sec), 3)
         if pending:
             metadata["stable"] = True  # never revised: the overlay shows it in the confirmed style
         event = CaptionEvent(

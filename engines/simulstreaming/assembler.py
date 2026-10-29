@@ -24,6 +24,7 @@ class AssembledText:
     text: str
     end_sec: float  # server stream clock: end of the last word in `text`
     segment: int  # voiced-segment counter (one per server is_final)
+    start_sec: float | None = None  # server stream clock: start of the first word, when known
 
 
 class CaptionAssembler:
@@ -32,6 +33,7 @@ class CaptionAssembler:
         self.segment = 0
         self._buffer = ""
         self._marks: list[tuple[int, float]] = []  # (buffer index after a word, its end time)
+        self._starts: list[tuple[int, float]] = []  # (buffer index where a word begins, its start time)
         self._last_end = 0.0
         self._last_pending = ""
 
@@ -54,7 +56,9 @@ class CaptionAssembler:
             self.segment += 1
         pending = self._buffer.strip()
         if pending and has_words(pending) and pending != self._last_pending:
-            out.append(AssembledText("pending", pending, self._end_at(len(self._buffer)), self.segment))
+            out.append(
+                AssembledText("pending", pending, self._end_at(len(self._buffer)), self.segment, self._start_before(len(self._buffer)))
+            )
             self._last_pending = pending
         elif not pending:
             self._last_pending = ""
@@ -65,6 +69,7 @@ class CaptionAssembler:
         if not has_words(self._buffer):
             self._buffer = ""
             self._marks = []
+            self._starts = []
             self._last_pending = ""
             return []
         return [self._commit(len(self._buffer))]
@@ -76,10 +81,15 @@ class CaptionAssembler:
         self._buffer += text
         words = message.get("words")
         marks: list[tuple[int, float]] = []
+        starts: list[tuple[int, float]] = []
         if isinstance(words, list) and words and "".join(str(w.get("text", "")) for w in words if isinstance(w, dict)) == text:
             cursor = base
             for word in words:
-                cursor += len(str(word.get("text", "")))
+                word_text = str(word.get("text", ""))
+                start = _number(word.get("start"))
+                if start is not None and word_text.strip():
+                    starts.append((cursor, start))
+                cursor += len(word_text)
                 end = _number(word.get("end"))
                 if end is not None:
                     marks.append((cursor, end))
@@ -87,10 +97,21 @@ class CaptionAssembler:
             end = _number(message.get("end"))
             if end is not None:
                 marks.append((len(self._buffer), end))
+        if not starts and text.strip():
+            start = _number(message.get("start"))
+            if start is not None:
+                starts.append((base, start))
         for index, end in marks:
             end = max(end, self._last_end)
             self._marks.append((index, end))
             self._last_end = end
+        self._starts.extend(starts)
+
+    def _start_before(self, index: int) -> float | None:
+        """Start time of the first word on the line, if it begins before `index`."""
+        if self._starts and self._starts[0][0] < index:
+            return self._starts[0][1]
+        return None
 
     def _end_at(self, index: int) -> float:
         end = None
@@ -106,10 +127,12 @@ class CaptionAssembler:
     def _commit(self, index: int) -> AssembledText:
         piece = self._buffer[:index].strip()
         end = self._end_at(index)
+        start = self._start_before(index)
         self._buffer = self._buffer[index:]
         self._marks = [(mark - index, mark_end) for mark, mark_end in self._marks if mark > index]
+        self._starts = [(mark - index, mark_start) for mark, mark_start in self._starts if mark >= index]
         self._last_pending = ""
-        return AssembledText("confirmed", piece, end, self.segment)
+        return AssembledText("confirmed", piece, end, self.segment, start)
 
     def _cut(self, is_final: bool) -> list[AssembledText]:
         out: list[AssembledText] = []

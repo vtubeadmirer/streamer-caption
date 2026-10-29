@@ -768,10 +768,11 @@ def run_v2_light(
             return
         route_source = simul_route.source_name
         if output.kind == "caption" and output.event is not None:
-            event = replace(
-                output.event,
-                metadata={**output.event.metadata, **event_source_metadata(route_source)},
-            )
+            metadata = {**output.event.metadata, **event_source_metadata(route_source)}
+            share = line_speech_share(metadata, schedulers[route_source].speech)
+            if share is not None:
+                metadata["speech_share"] = share
+            event = replace(output.event, metadata=metadata)
             converted = (
                 pending_events(event, defense, slang, min_chars=1, allow_single_char=True)
                 if output.pending
@@ -1245,6 +1246,19 @@ def run_v2_light(
     if report_paths:
         print(f"session report: {report_paths['markdown']}")
     return pipeline_exit_code
+
+
+def line_speech_share(metadata: dict, timeline: Any) -> float | None:
+    """How much of a 정확 우선 line's audio the app's own voice detector heard as speech
+    (SpeechTimeline.share_around over line_start/end_offset_sec), for DefenseFilter."""
+    end = metadata.get("line_end_offset_sec")
+    if timeline is None or isinstance(end, bool) or not isinstance(end, (int, float)):
+        return None
+    start = metadata.get("line_start_offset_sec")
+    if isinstance(start, bool) or not isinstance(start, (int, float)) or start > end:
+        start = float(end) - 1.0  # no word start times: judge the last second
+    share = timeline.share_around(float(start), float(end))
+    return None if share is None else round(share, 3)
 
 
 def postprocess_event(

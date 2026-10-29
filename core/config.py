@@ -203,6 +203,9 @@ DEFAULTS: dict[str, Any] = {
         "short_utterance_voice_ratio_floor": 0.02,
         "repeat_window_sec": 45,
         "repeat_limit": 2,
+        # A whole line that is only a YouTube outro phrase ("감사합니다.", "다음 영상에서 만나요")
+        # is hidden when the voice detector heard speech in less than this share of its audio.
+        "phantom_max_speech_share": 0.3,
     },
     "server": {"host": "127.0.0.1", "port": 8765, "admin_port": 8766},
     "slang": {
@@ -338,6 +341,7 @@ CONFIG_LIFETIME: dict[str, str] = {
     "defense.short_utterance_voice_ratio_floor": "cold",
     "defense.repeat_window_sec": "cold",
     "defense.repeat_limit": "cold",
+    "defense.phantom_max_speech_share": "cold",
     "slang.dict_path": "cold",
     "slang.prompt_mode": "cold",
     "monitoring.memory_log_interval_min": "cold",
@@ -672,6 +676,7 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     if int(repeat_limit) != repeat_limit:
         raise ValueError("defense.repeat_limit must be an integer")
+    _bounded_number(config, "defense", "phantom_max_speech_share", 0, 1)
     _bounded_number(config, "server", "port", 1024, 65535)
     _bounded_number(config, "server", "admin_port", 1024, 65535)
     if int(config["server"]["port"]) == int(config["server"]["admin_port"]):

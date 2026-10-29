@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -9,6 +10,59 @@ from core.vad import create_vad_segmenter
 
 
 StreamingActionType = Literal["pending_window", "confirmed_segment", "discarded_segment"]
+
+
+class SpeechTimeline:
+    """The voice detector's verdict for every chunk of one source over the last minutes.
+
+    speech_share() is the part of a time span heard as speech. The 정확 우선 engine reports no
+    Whisper confidence values, so DefenseFilter uses this share to tell a "감사합니다." said by
+    the streamer from one invented over music or game sound.
+    """
+
+    def __init__(self, max_sec: float = 120.0) -> None:
+        self.max_sec = float(max_sec)
+        self._spans: deque[tuple[float, float, bool]] = deque()
+
+    def add(self, start_sec: float, end_sec: float, is_voice: bool) -> None:
+        self._spans.append((float(start_sec), float(end_sec), bool(is_voice)))
+        while self._spans and end_sec - self._spans[0][1] > self.max_sec:
+            self._spans.popleft()
+
+    def speech_share(self, start_sec: float, end_sec: float) -> float | None:
+        """Voiced part of [start_sec, end_sec], or None when no chunk of it was seen."""
+        if end_sec <= start_sec:
+            return None
+        voiced = covered = 0.0
+        for span_start, span_end, is_voice in reversed(self._spans):
+            if span_end <= start_sec:
+                break
+            overlap = min(span_end, end_sec) - max(span_start, start_sec)
+            if overlap <= 0:
+                continue
+            covered += overlap
+            if is_voice:
+                voiced += overlap
+        if covered <= 0:
+            return None
+        return voiced / covered
+
+    def share_around(
+        self,
+        start_sec: float,
+        end_sec: float,
+        *,
+        margin_sec: float = 0.2,
+        min_span_sec: float = 0.6,
+    ) -> float | None:
+        """speech_share() of a caption line's audio, widened a little: engine word times can be
+        a frame or two off, and a one-word line spans too little audio to judge alone."""
+        start = float(start_sec) - margin_sec
+        end = float(end_sec) + margin_sec
+        if end - start < min_span_sec:
+            middle = (start + end) / 2.0
+            start, end = middle - min_span_sec / 2.0, middle + min_span_sec / 2.0
+        return self.speech_share(start, end)
 
 
 @dataclass(frozen=True)
@@ -37,6 +91,7 @@ class PendingWindowScheduler:
             max_seconds=float(config["streaming"]["buffer_max_sec"]),
         )
         self.segmenter = create_vad_segmenter(config)
+        self.speech = SpeechTimeline()
         self._last_pending_end_sample = 0
         self._last_pending_emit_sec = -1_000_000.0
 
@@ -51,6 +106,7 @@ class PendingWindowScheduler:
 
         decision = getattr(self.segmenter, "last_decision", None)
         is_voice = bool(decision.is_voice) if decision is not None else chunk.rms >= self.segmenter.threshold
+        self.speech.add(chunk.offset_sec, chunk.offset_sec + chunk.duration_sec, is_voice)
         if is_voice and self._pending_due(chunk):
             window = self._pending_window()
             if window.samples.size > 0:

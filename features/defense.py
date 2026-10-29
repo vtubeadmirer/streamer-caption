@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import user_path
+from features.phantom_phrases import is_phantom_line, is_subtitle_credit
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,11 @@ class DefenseFilter:
             defense.get("repeat_window_sec", 45.0)
         )
         self.repeat_limit = int(defense.get("repeat_limit", 2))
+        # A whole line like "감사합니다." is hidden when less than this share of its audio was
+        # speech to the app's voice detector (metadata speech_share, else segment_voice_ratio).
+        self.phantom_max_speech_share = float(
+            defense.get("phantom_max_speech_share", 0.3)
+        )
         self._recent_visible: deque[tuple[float, str]] = deque()
         self.blocklist = _load_terms(user_path(defense["blocklist_path"]))
         self.whitelist = set(
@@ -108,6 +114,9 @@ class DefenseFilter:
             "compression_ratio",
         )
         audio_offset = self._float_metadata(evidence, "audio_offset_sec")
+        # Share of this line's audio the app's own voice detector heard as speech. The 정확 우선
+        # engine reports no Whisper confidence values, so this is its main acoustic evidence.
+        speech_share = self._float_metadata(evidence, "speech_share")
         compact_length = len(re.sub(r"\s+", "", normalized))
         short_speech_rescue = (
             compact_length <= self.short_utterance_max_chars
@@ -155,6 +164,18 @@ class DefenseFilter:
             self._remember(normalized, audio_offset, remember)
             return DefenseResult(True, normalized, 1.0, "whitelist")
 
+        if self.filter_hallucination and is_phantom_line(normalized):
+            share = speech_share if speech_share is not None else voice_ratio
+            if share is not None and share < self.phantom_max_speech_share:
+                return DefenseResult(
+                    False,
+                    normalized,
+                    0.0,
+                    "phantom_phrase",
+                    1.0,
+                    ("phantom_phrase", "low_speech_share"),
+                )
+
         risk_score, signals = self._hallucination_risk(
             normalized,
             confidence,
@@ -164,6 +185,7 @@ class DefenseFilter:
             compression_ratio,
             audio_offset,
             short_speech_rescue,
+            speech_share,
         )
         if risk_score >= self.hallucination_score_threshold:
             return DefenseResult(
@@ -231,9 +253,18 @@ class DefenseFilter:
         compression_ratio: float | None,
         audio_offset: float | None,
         short_speech_rescue: bool,
+        speech_share: float | None = None,
     ) -> tuple[float, list[str]]:
         score = 0.0
         signals: list[str] = []
+
+        low_speech_share = (
+            speech_share is not None
+            and speech_share < self.phantom_max_speech_share
+        )
+        if low_speech_share:
+            score += 0.25
+            signals.append("low_speech_share")
 
         weak_voice_limit = max(
             self.min_segment_voice_ratio * 2.0,
@@ -309,6 +340,7 @@ class DefenseFilter:
                 avg_logprob is not None
                 and avg_logprob < self.min_avg_logprob
             )
+            or low_speech_share
         )
         if repeated >= self.repeat_limit and weak_acoustic_evidence:
             score += 0.7
@@ -369,33 +401,15 @@ class DefenseFilter:
         return result
 
     def _looks_like_hallucination(self, text: str) -> bool:
-        compact = re.sub(r"\s+", "", text)
+        """Subtitle credits ("\ud55c\uae00\uc790\ub9c9 by \u2026", "\uc790\ub9c9 \uc81c\uacf5 \u2026") and long runs of two or three characters.
+        A sentence that merely mentions \uc790\ub9c9, \ud3b8\uc9d1 or "by" is real speech."""
+        if is_subtitle_credit(text):
+            return True
         compact_plain = re.sub(
             "[^0-9A-Za-z\uac00-\ud7a3]",
             "",
-            compact,
+            text,
         )
-        lowered = text.lower()
-        subtitle_markers = (
-            "\uc790\ub9c9",
-            "\u5b57\u5e55",
-            "subtitle",
-            "subtitles",
-            "caption",
-            "by ",
-        )
-        if any(marker in lowered for marker in subtitle_markers):
-            if len(compact) <= 30:
-                return True
-        credit_markers = (
-            "\uc81c\uc791",
-            "\ud3b8\uc9d1",
-        )
-        if (
-            any(marker in compact_plain for marker in credit_markers)
-            and len(compact_plain) <= 30
-        ):
-            return True
         if len(compact_plain) >= 16 and len(set(compact_plain)) <= 3:
             return True
         return False
