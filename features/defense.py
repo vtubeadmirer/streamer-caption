@@ -73,7 +73,8 @@ class DefenseFilter:
         )
         self.repeat_limit = int(defense.get("repeat_limit", 2))
         # A whole line like "감사합니다." is hidden when less than this share of its audio was
-        # speech to the app's voice detector (metadata speech_share, else segment_voice_ratio).
+        # speech to the app's voice detector (metadata speech_share, else segment_voice_ratio
+        # unless short_speech_rescue applies).
         self.phantom_max_speech_share = float(
             defense.get("phantom_max_speech_share", 0.3)
         )
@@ -165,7 +166,13 @@ class DefenseFilter:
             return DefenseResult(True, normalized, 1.0, "whitelist")
 
         if self.filter_hallucination and is_phantom_line(normalized):
-            share = speech_share if speech_share is not None else voice_ratio
+            # faster-whisper lines have no speech_share; the segment's voice ratio stands in, but
+            # not for a short line Whisper is sure of (short_speech_rescue, as for low_voice_ratio):
+            # the pre-roll and every chunk the detector missed under game sound weigh heavily in
+            # a short segment, so a donor's "감사합니다!" could be hidden.
+            share = speech_share
+            if share is None and not short_speech_rescue:
+                share = voice_ratio
             if share is not None and share < self.phantom_max_speech_share:
                 return DefenseResult(
                     False,

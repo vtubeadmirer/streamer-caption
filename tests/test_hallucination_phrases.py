@@ -5,8 +5,9 @@
   fewer containing 자막, which cost three real sentences per ten minutes of the lab script.
 * A whole line that is only an outro phrase ("감사합니다.", "다음 영상에서 만나요!") is hidden
   when the app's voice detector heard little speech in that line's audio (speech_share, or the
-  segment's voice ratio for faster-whisper). The 정확 우선 engine reports no Whisper confidence
-  values, so before this its risk score was 0 and such lines reached the screen.
+  segment's voice ratio for a faster-whisper line that short_speech_rescue does not cover). The
+  정확 우선 engine reports no Whisper confidence values, so before this its risk score was 0 and
+  such lines reached the screen.
 * Any other line is never hidden on a low share alone, not even when it repeats: a short "네"
   or "응" spans too little audio for the voice detector and often scores under 0.3.
 """
@@ -170,12 +171,29 @@ def check_phantom_lines(config: dict) -> None:
     assert app.pending_events(simul_line("감사합니다.", 0.1, 700.0), defense, slang, min_chars=1, allow_single_char=True) == []
     assert app.pending_events(simul_line("감사합니다.", 0.8, 710.0), defense, slang, min_chars=1, allow_single_char=True)
 
-    # faster-whisper: the segment's voice ratio stands in for the share.
+    # faster-whisper: the segment's voice ratio stands in for the share ...
     baseline = DefenseFilter(config)
-    weak = baseline.apply("감사합니다.", 0.9, {"segment_voice_ratio": 0.2, "no_speech_prob": 0.1, "audio_offset_sec": 50.0})
+    unsure = {"no_speech_prob": 0.5, "avg_logprob": -0.3}  # confidence 0.6
+    weak = baseline.apply("감사합니다.", 0.6, {**unsure, "segment_voice_ratio": 0.2, "audio_offset_sec": 50.0})
     assert not weak.visible and weak.reason == "phantom_phrase", weak
     spoken = baseline.apply("감사합니다.", 0.9, {"segment_voice_ratio": 0.6, "no_speech_prob": 0.1, "audio_offset_sec": 80.0})
     assert spoken.visible, spoken
+    # ... but not for a short line Whisper is sure of (short_speech_rescue): the pre-roll and the
+    # chunks the detector missed under game sound weigh heavily in a short segment's ratio.
+    sure = {"no_speech_prob": 0.05, "avg_logprob": -0.15}  # confidence 0.9
+    for index, text in enumerate(("감사합니다!", "감사합니다.", "고맙습니다")):
+        thanks = baseline.apply(text, 0.9, {**sure, "segment_voice_ratio": 0.2, "audio_offset_sec": 110.0 + index * 60})
+        assert thanks.visible and "short_speech_rescue" in thanks.signals, (text, thanks)
+        out = app.postprocess_event(
+            CaptionEvent(event_type="caption_confirmed", text=text, confidence=0.9, audio_offset_sec=400.0 + index * 60,
+                         engine="baseline", metadata={**sure, "segment_voice_ratio": 0.2}),
+            DefenseFilter(config), slang,
+        )
+        assert [event.event_type for event in out] == ["caption_confirmed"], (text, out)
+    # A measured speech share is used whatever Whisper thinks.
+    measured = baseline.apply("감사합니다.", 0.9, {**sure, "segment_voice_ratio": 0.2, "speech_share": 0.1,
+                                                 "audio_offset_sec": 700.0})
+    assert not measured.visible and measured.reason == "phantom_phrase", measured
 
     # The whitelist still wins over the phrase rule.
     tmp = Path(config["defense"]["whitelist_path"]).parent
