@@ -7,6 +7,8 @@
   when the app's voice detector heard little speech in that line's audio (speech_share, or the
   segment's voice ratio for faster-whisper). The 정확 우선 engine reports no Whisper confidence
   values, so before this its risk score was 0 and such lines reached the screen.
+* Any other line is never hidden on a low share alone, not even when it repeats: a short "네"
+  or "응" spans too little audio for the voice detector and often scores under 0.3.
 """
 from __future__ import annotations
 
@@ -184,18 +186,26 @@ def check_phantom_lines(config: dict) -> None:
     finally:
         (tmp / "whitelist.txt").unlink()
 
-    # The share also feeds the risk score: alone it only marks the line ...
-    risk = DefenseFilter(config)
-    marked = risk.apply("오늘은 여기까지 할게요", 1.0, {"speech_share": 0.1, "audio_offset_sec": 10.0})
-    assert marked.visible and "low_speech_share" in marked.signals and 0 < marked.risk_score < 0.72, marked
-    # ... and counts as weak evidence for a line repeated over music.
-    results = [risk.apply("오늘은 여기까지 할게요", 1.0, {"speech_share": 0.1, "audio_offset_sec": 20.0 + 10 * k})
-               for k in range(3)]
-    assert results[-1].visible is False and "repeated_weak_caption" in results[-1].signals, results
-    repeated_spoken = DefenseFilter(config)
-    spoken_results = [repeated_spoken.apply("오늘은 여기까지 할게요", 1.0, {"speech_share": 0.9, "audio_offset_sec": 20.0 + 10 * k})
-                      for k in range(4)]
-    assert all(result.visible for result in spoken_results), spoken_results
+    # The share also feeds the risk score, but alone it only marks the line, even a repeated one:
+    # a short "네" or "응" spans too little audio for the voice detector and often scores under
+    # 0.3, and allow_single_char is there so that every one of them shows.
+    for text in ("네", "응", "오늘은 여기까지 할게요"):
+        risk = DefenseFilter(config)
+        results = [risk.apply(text, 1.0, {"speech_share": 0.15, "audio_offset_sec": 20.0 + 10 * k}, allow_single_char=True)
+                   for k in range(4)]
+        assert all(result.visible for result in results), (text, results)
+        assert all("low_speech_share" in result.signals and 0 < result.risk_score < 0.72 for result in results), results
+        assert not any("repeated_weak_caption" in result.signals for result in results), results
+    backchannel = DefenseFilter(config)
+    for k in range(3):
+        out = app.postprocess_event(simul_line("네", 0.15, 800.0 + 5 * k), backchannel, slang, allow_single_char=True)
+        assert [event.event_type for event in out] == ["caption_confirmed"], (k, out)
+    assert app.pending_events(simul_line("네", 0.15, 816.0), backchannel, slang, min_chars=1, allow_single_char=True)
+    # Outro phrases over music stay hidden by the phrase rule, however often they come.
+    phrases = DefenseFilter(config)
+    for k in range(3):
+        out = app.postprocess_event(simul_line("감사합니다.", 0.2, 900.0 + 5 * k), phrases, slang, allow_single_char=True)
+        assert out[0].event_type == "caption_hidden" and out[0].metadata["defense_reason"] == "phantom_phrase", out
 
 
 def chunk(offset: float, voiced: bool, duration: float = 0.064) -> AudioChunk:

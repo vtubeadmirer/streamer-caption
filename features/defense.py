@@ -326,6 +326,9 @@ class DefenseFilter:
             signals.append("weak_confidence")
 
         repeated = self._recent_repeat_count(text, audio_offset)
+        # A low speech_share is not weak evidence here: a short "네" or "응" spans too little
+        # audio for the voice detector and often scores under 0.3, so every third one said
+        # within repeat_window_sec would be hidden. Outro phrases have their own rule (apply).
         weak_acoustic_evidence = (
             confidence < self.dim_confidence
             or (
@@ -340,7 +343,6 @@ class DefenseFilter:
                 avg_logprob is not None
                 and avg_logprob < self.min_avg_logprob
             )
-            or low_speech_share
         )
         if repeated >= self.repeat_limit and weak_acoustic_evidence:
             score += 0.7
