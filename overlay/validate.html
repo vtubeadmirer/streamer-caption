@@ -45,6 +45,7 @@
       --shadow: 0 10px 28px rgba(0, 0, 0, .24);
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       min-width: 320px;
@@ -139,6 +140,7 @@
     .recent-header { display: flex; align-items: center; gap: 12px; margin-top: 28px; }
     .recent-header h2 { margin: 0; font-size: 16px; }
     .recent-header span { margin-left: auto; color: var(--muted); }
+    .marker-hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
     .marker-list { margin-top: 10px; border-top: 1px solid var(--line); }
     .marker-row {
       display: grid;
@@ -148,16 +150,31 @@
       min-height: 58px;
       padding: 9px 4px;
       border-bottom: 1px solid var(--line);
+      cursor: pointer;
     }
+    .marker-row:hover { background: var(--surface-2); }
+    .marker-row.editing { cursor: default; background: transparent; }
     .marker-time { font-family: ui-monospace, "Cascadia Mono", monospace; font-weight: 700; }
     .marker-kind { font-weight: 700; }
-    .marker-detail { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
-    .delete-button {
+    .marker-detail {
+      min-width: 0; min-height: 36px; padding: 0;
+      border: 0; background: transparent; color: var(--muted);
+      text-align: left; overflow-wrap: anywhere; cursor: pointer;
+    }
+    .marker-detail:hover { color: var(--text); }
+    .marker-input {
+      width: 100%; min-height: 40px; padding: 8px 10px;
+      border: 1px solid var(--focus); border-radius: 6px;
+      background: var(--surface); color: var(--text);
+    }
+    .marker-actions { display: flex; gap: 6px; }
+    .delete-button, .edit-button {
       min-width: 58px; min-height: 36px; padding: 7px 10px;
       border: 1px solid var(--line); border-radius: 6px;
       background: var(--surface); color: var(--text); cursor: pointer;
     }
     .delete-button:hover { border-color: var(--danger); color: var(--danger); }
+    .edit-button:hover { border-color: var(--focus); color: var(--focus); }
     .empty { padding: 28px 4px; color: var(--muted); text-align: center; border-bottom: 1px solid var(--line); }
     .toast {
       position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
@@ -174,8 +191,9 @@
       .action-grid { grid-template-columns: repeat(2, 1fr); }
       .marker-row { grid-template-columns: 78px minmax(0, 1fr) auto; }
       .marker-kind { grid-column: 2; }
-      .marker-detail { grid-column: 1 / 3; }
-      .delete-button { grid-column: 3; grid-row: 1 / 3; }
+      .marker-detail, .marker-input { grid-column: 1 / 3; }
+      .delete-button, .marker-actions { grid-column: 3; grid-row: 1 / 3; }
+      .marker-actions { flex-direction: column; }
     }
   </style>
 </head>
@@ -213,6 +231,7 @@
       <h2>최근 표시</h2>
       <span id="markerCount">0개</span>
     </div>
+    <p id="markerHint" class="marker-hint" hidden>줄을 누르면 고칠 수 있어요 · Enter 저장 · Esc 닫기</p>
     <div id="markerList" class="marker-list" aria-live="polite"></div>
   </main>
   <div id="toast" class="toast" role="status"></div>
@@ -224,7 +243,8 @@
       wrong_word: "단어 오인식",
       good: "정상 인식",
     };
-    const state = { status: {}, session: null, annotations: [], busy: false };
+    // editing: the marker whose note is being fixed ({ id, sessionId, draft }), kept across re-renders.
+    const state = { status: {}, session: null, annotations: [], busy: false, editing: null };
     const el = (id) => document.getElementById(id);
 
     async function api(path, options = {}) {
@@ -282,20 +302,89 @@
 
     function renderMarkers() {
       const items = [...state.annotations].reverse();
+      const shown = items.slice(0, 30);
+      if (state.editing && !shown.some((item) => item.id === state.editing.id)) state.editing = null;
       el("markerCount").textContent = `${items.length}개`;
+      el("markerHint").hidden = !items.length;
       if (!items.length) {
         el("markerList").innerHTML = '<div class="empty">아직 표시한 시점이 없습니다.</div>';
         return;
       }
-      el("markerList").innerHTML = items.slice(0, 30).map((item) => {
-        const detail = item.note || item.caption_text || "메모 없음";
-        return `<div class="marker-row">
-          <span class="marker-time">${formatOffset(item.offset_sec)}</span>
-          <span class="marker-kind">${escapeHtml(labels[item.kind] || item.kind)}</span>
-          <span class="marker-detail">${escapeHtml(detail)}</span>
+      el("markerList").innerHTML = shown.map((item) => {
+        const time = formatOffset(item.offset_sec);
+        const kind = escapeHtml(labels[item.kind] || item.kind);
+        if (state.editing?.id === item.id) {
+          return `<div class="marker-row editing" data-marker-id="${item.id}">
+          <span class="marker-time">${time}</span>
+          <span class="marker-kind">${kind}</span>
+          <input class="marker-input" type="text" maxlength="1000" data-edit-input="${item.id}" value="${escapeHtml(state.editing.draft)}" aria-label="${time} ${kind} 메모 고치기 (Enter 저장, Esc 닫기)">
+          <span class="marker-actions">
+            <button class="edit-button" type="button" data-save-id="${item.id}">저장</button>
+            <button class="edit-button" type="button" data-close-id="${item.id}">닫기</button>
+          </span>
+        </div>`;
+        }
+        const detail = escapeHtml(item.note || item.caption_text || "메모 없음");
+        return `<div class="marker-row" data-marker-id="${item.id}">
+          <span class="marker-time">${time}</span>
+          <span class="marker-kind">${kind}</span>
+          <button class="marker-detail" type="button" data-edit-id="${item.id}" aria-label="${time} ${kind} 고치기: ${detail}">${detail}</button>
           <button class="delete-button" type="button" data-delete-id="${item.id}">취소</button>
         </div>`;
       }).join("");
+    }
+
+    // A row opens an input with its note, or the caption shown when it was marked, to fix.
+    function startEdit(annotationId) {
+      const item = state.annotations.find((entry) => entry.id === annotationId);
+      if (!item || !state.session) return;
+      if (state.editing?.id !== item.id) {
+        state.editing = { id: item.id, sessionId: state.session.id, draft: item.note || item.caption_text || "" };
+        renderMarkers();
+      }
+      const input = el("markerList").querySelector("[data-edit-input]");
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }
+
+    function closeEdit() {
+      const editing = state.editing;
+      if (!editing) return;
+      state.editing = null;
+      renderMarkers();
+      el("markerList").querySelector(`[data-edit-id="${editing.id}"]`)?.focus();
+    }
+
+    async function saveEdit() {
+      const editing = state.editing;
+      if (!editing || state.busy) return;
+      const input = el("markerList").querySelector("[data-edit-input]");
+      if (input) editing.draft = input.value;
+      const item = state.annotations.find((entry) => entry.id === editing.id);
+      const note = editing.draft.trim();
+      if (!item || note === item.note || note === (item.note || item.caption_text || "").trim()) {
+        closeEdit();  // nothing changed
+        return;
+      }
+      state.busy = true;
+      renderStatus();
+      try {
+        const payload = await api("/api/archive/annotation-update", {
+          method: "POST",
+          body: JSON.stringify({ session_id: editing.sessionId, annotation_id: editing.id, note }),
+        });
+        state.annotations = state.annotations.map((entry) => (entry.id === editing.id ? payload.annotation : entry));
+        if (state.editing === editing) closeEdit();
+        else renderMarkers();
+        showToast("메모를 고쳤습니다.");
+      } catch (error) {
+        showToast(error.message);  // the input stays open with what was typed
+      } finally {
+        state.busy = false;
+        renderStatus();
+      }
     }
 
     async function refresh() {
@@ -304,6 +393,8 @@
         state.status = status;
         const previousId = state.session?.id;
         state.session = latest.session;
+        // The list is redrawn only for another session (or while it is empty), so an open
+        // input keeps what is being typed.
         if (state.session && (previousId !== state.session.id || !state.annotations.length)) {
           const payload = await api(`/api/archive/annotations?session_id=${encodeURIComponent(state.session.id)}&limit=5000`);
           state.annotations = payload.annotations || [];
@@ -370,8 +461,32 @@
       button.addEventListener("click", () => addMarker(button.dataset.kind));
     });
     el("markerList").addEventListener("click", (event) => {
-      const button = event.target.closest("[data-delete-id]");
-      if (button) deleteMarker(Number(button.dataset.deleteId));
+      const target = event.target;
+      const button = target.closest("[data-delete-id]");
+      if (button) {
+        deleteMarker(Number(button.dataset.deleteId));
+      } else if (target.closest("[data-save-id]")) {
+        saveEdit();
+      } else if (target.closest("[data-close-id]")) {
+        closeEdit();
+      } else if (!target.closest("[data-edit-input]")) {
+        const row = target.closest("[data-marker-id]");
+        if (row) startEdit(Number(row.dataset.markerId));
+      }
+    });
+    el("markerList").addEventListener("keydown", (event) => {
+      // Enter that ends a Korean IME composition is not the one that saves.
+      if (!event.target.closest("[data-edit-input]") || event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveEdit();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeEdit();
+      }
+    });
+    el("markerList").addEventListener("input", (event) => {
+      if (state.editing && event.target.closest("[data-edit-input]")) state.editing.draft = event.target.value;
     });
     el("themeButton").addEventListener("click", () => {
       const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";

@@ -508,6 +508,24 @@ class TranscriptArchive:
             ).fetchall()
         return [self._annotation_dict(row) for row in rows]
 
+    def update_annotation(
+        self,
+        annotation_id: int,
+        session_id: str,
+        *,
+        note: str,
+    ) -> dict[str, Any] | None:
+        """Replaces a marker's note (the streamer fixing it afterwards); None when the session
+        has no such marker. Kind, time and the caption shown then stay as they were."""
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "UPDATE annotations SET note = ? WHERE id = ? AND session_id = ?",
+                (str(note).strip()[:1000], int(annotation_id), session_id),
+            )
+            if not cursor.rowcount:
+                return None
+        return self.get_annotation(annotation_id)
+
     def delete_annotation(self, annotation_id: int, session_id: str) -> bool:
         with self._connection() as connection:
             cursor = connection.execute(

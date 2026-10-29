@@ -44,7 +44,7 @@ flowchart LR
 - 사용자가 입력한 메모
 - 생성 시각
 
-최근 표시는 `/validate`에서 바로 취소할 수 있다. 표시 내용은 방송 종료 리포트와 통합 검증 보고서에도 포함된다.
+최근 표시는 `/validate`에서 바로 취소하거나 고칠 수 있다. 줄을 누르면 메모(없으면 표시 당시 자막)가 든 입력칸이 열리고, Enter는 메모로 저장하고 Esc는 저장하지 않고 닫는다. 표시 내용은 방송 종료 리포트와 통합 검증 보고서에도 포함된다. 방송이 끝난 뒤 고친 메모는 그 뒤에 만드는 검증 보고서에 들어간다.
 
 ## 통합 검증 보고서
 
@@ -88,12 +88,13 @@ flowchart LR
 - `GET /api/archive/info`
 - `GET /api/archive/annotations?session_id=<id>`
 - `POST /api/archive/annotation`
+- `POST /api/archive/annotation-update`
 - `POST /api/archive/annotation-delete`
 - `POST /api/archive/export`
 - `POST /api/archive/delete-session`
 - `POST /api/archive/prune`
 
-개별 삭제는 실수 방지를 위해 `session_id`와 같은 값의 `confirm_session_id`가 필요하다.
+개별 삭제는 실수 방지를 위해 `session_id`와 같은 값의 `confirm_session_id`가 필요하다. 표시 메모 고치기는 `session_id`, `annotation_id`, `note`(최대 1000자)를 보내며 메모만 바뀐다.
 
 ## 업데이트와 개인정보
 

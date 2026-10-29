@@ -410,6 +410,7 @@ class AdminServer:
                     return
                 if path in {
                     "/api/archive/annotation",
+                    "/api/archive/annotation-update",
                     "/api/archive/annotation-delete",
                     "/api/archive/export",
                     "/api/archive/delete-session",
@@ -695,6 +696,34 @@ class AdminServer:
                                 else {"source": "validation_ui"}
                             ),
                         )
+                        self._invalidate_archive_cache(
+                            analysis_cache,
+                            analysis_cache_lock,
+                            session_id,
+                        )
+                        self._send_json({"annotation": annotation})
+                        return
+                    if path == "/api/archive/annotation-update":
+                        session_id = str(payload.get("session_id", "")).strip()
+                        if not session_id:
+                            raise ValueError("session_id required")
+                        annotation_id = int(payload.get("annotation_id", 0))
+                        if annotation_id <= 0:
+                            raise ValueError("annotation_id must be positive")
+                        note = payload.get("note")
+                        if not isinstance(note, str):
+                            raise ValueError("note must be a string")
+                        annotation = archive.update_annotation(
+                            annotation_id,
+                            session_id,
+                            note=note,
+                        )
+                        if annotation is None:
+                            self._send_json(
+                                {"error": "annotation not found"},
+                                HTTPStatus.NOT_FOUND,
+                            )
+                            return
                         self._invalidate_archive_cache(
                             analysis_cache,
                             analysis_cache_lock,

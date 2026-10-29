@@ -7,6 +7,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -48,6 +49,24 @@ def post_json(base_url: str, path: str, payload: dict) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def post_status(base_url: str, path: str, payload: object, origin: str = "") -> tuple[int, dict]:
+    """POST that returns (status, body) for refused requests too."""
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Origin"] = origin
+    request = Request(
+        base_url + path,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with urlopen(request, timeout=3.0) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
 def test_annotations_reports_and_validation(temp: Path) -> None:
     archive = TranscriptArchive(temp / "validation.sqlite3", bucket_minutes=30)
     session_id = "2026-07-11_120000"
@@ -73,6 +92,19 @@ def test_annotations_reports_and_validation(temp: Path) -> None:
         caption_text="샌드위치 테스트입니다.",
     )
     assert annotation["kind"] == "wrong_word"
+    assert archive.archive_info()["annotation_count"] == 1
+
+    # The streamer fixes the note afterwards (/validate): only the note changes.
+    assert archive.update_annotation(annotation["id"], "other-session", note="x") is None
+    assert archive.update_annotation(annotation["id"] + 100, session_id, note="x") is None
+    assert len(archive.update_annotation(annotation["id"], session_id, note="가" * 1200)["note"]) == 1000
+    fixed_note = "샹도웨쭈라고 말했는데 산도웨이쭈로 나옴"
+    updated = archive.update_annotation(annotation["id"], session_id, note=f"  {fixed_note} ")
+    assert updated["note"] == fixed_note, updated
+    assert {key: value for key, value in updated.items() if key != "note"} == {
+        key: value for key, value in annotation.items() if key != "note"
+    }
+    assert archive.list_annotations(session_id)[0]["note"] == fixed_note
     assert archive.archive_info()["annotation_count"] == 1
 
     session_dir = temp / session_id
@@ -121,12 +153,16 @@ def test_annotations_reports_and_validation(temp: Path) -> None:
     assert report["latency"]["p95_sec"] == 0.42
     assert report["memory"]["rss_slope_mb_per_hour"] == 20.0
     assert report["annotation_counts"]["wrong_word"] == 1
-    assert "단어 오인식" in Path(paths["markdown"]).read_text(encoding="utf-8")
+    validation_markdown = Path(paths["markdown"]).read_text(encoding="utf-8")
+    assert "단어 오인식" in validation_markdown
+    assert fixed_note in validation_markdown and "샹도웨쭈로 들림" not in validation_markdown
 
     broadcast_report = build_session_report(archive, session_id, config)
     assert broadcast_report["report_version"] == 2
-    assert broadcast_report["annotations"][0]["note"] == "샹도웨쭈로 들림"
-    assert "방송 중 사용자 표시" in render_report_markdown(broadcast_report)
+    assert broadcast_report["annotations"][0]["note"] == fixed_note
+    broadcast_markdown = render_report_markdown(broadcast_report)
+    assert "방송 중 사용자 표시" in broadcast_markdown
+    assert f"단어 오인식 · {fixed_note}" in broadcast_markdown
     assert archive.delete_annotation(annotation["id"], session_id) is True
 
 
@@ -234,6 +270,8 @@ def test_admin_annotation_api_and_pages(temp: Path) -> None:
         validate_html = get_text(base_url, "/validate")
         history_html = get_text(base_url, "/history")
         assert 'data-kind="hallucination"' in validate_html
+        assert "줄을 누르면 고칠 수 있어요" in validate_html
+        assert "/api/archive/annotation-update" in validate_html
         assert 'id="backupArchive"' in history_html
         assert get_json(base_url, "/api/archive/info")["archive"]["session_count"] == 2
 
@@ -254,6 +292,41 @@ def test_admin_annotation_api_and_pages(temp: Path) -> None:
         )
         assert listed["count"] == 1
         assert listed["annotations"][0]["note"] == "작게 말한 부분"
+
+        # Fixing the note afterwards; the cached session report must not keep the old one.
+        report_path = "/api/archive/report?session_id=api-session"
+        assert get_json(base_url, report_path)["annotations"][0]["note"] == "작게 말한 부분"
+        fixed = post_json(
+            base_url,
+            "/api/archive/annotation-update",
+            {"session_id": "api-session", "annotation_id": created["id"], "note": "  거의 들리지 않던 말 "},
+        )["annotation"]
+        assert fixed["id"] == created["id"] and fixed["note"] == "거의 들리지 않던 말", fixed
+        assert fixed["kind"] == "missed" and fixed["caption_text"] == "API 테스트 자막", fixed
+        listed = get_json(base_url, "/api/archive/annotations?session_id=api-session")
+        assert listed["annotations"][0]["note"] == "거의 들리지 않던 말", listed
+        assert get_json(base_url, report_path)["annotations"][0]["note"] == "거의 들리지 않던 말"
+        update = "/api/archive/annotation-update"
+        target = {"session_id": "api-session", "annotation_id": created["id"]}
+        refused = {
+            "unknown id": ({**target, "annotation_id": created["id"] + 50, "note": "x"}, "", 404),
+            "other session": ({**target, "session_id": "old-api-session", "note": "x"}, "", 404),
+            "zero id": ({**target, "annotation_id": 0, "note": "x"}, "", 400),
+            "bad id": ({**target, "annotation_id": "abc", "note": "x"}, "", 400),
+            "no session": ({"annotation_id": created["id"], "note": "x"}, "", 400),
+            "no note": (target, "", 400),
+            "number note": ({**target, "note": 5}, "", 400),
+            "not an object": ([created["id"]], "", 400),
+            "cross-origin": ({**target, "note": "x"}, "https://evil.example", 403),
+        }
+        for case, (payload, origin, expected) in refused.items():
+            status, body = post_status(base_url, update, payload, origin=origin)
+            assert status == expected and body.get("error"), (case, status, body)
+        listed = get_json(base_url, "/api/archive/annotations?session_id=api-session")
+        assert listed["annotations"][0]["note"] == "거의 들리지 않던 말", "refused requests change nothing"
+        status, body = post_status(base_url, update, {**target, "note": "페이지에서 고침"}, origin=base_url)
+        assert status == 200 and body["annotation"]["note"] == "페이지에서 고침", (status, body)
+
         deleted = post_json(
             base_url,
             "/api/archive/annotation-delete",
