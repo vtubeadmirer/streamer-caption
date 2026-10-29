@@ -107,7 +107,9 @@ class SystemAudioChunkSource:
     * Still nothing after system_stall_restart_sec (5 s): the recorder is opened again
       (restart_count and stall_restart_count go up). Reopens with no audio in between wait longer
       each time, up to a minute, and never end the source. A stuck recorder thread cannot be
-      killed; while MAX_STUCK_READERS of them are still inside the driver, no new one is opened.
+      killed; while MAX_STUCK_READERS of them are still inside the driver, a new recorder is
+      opened only every STUCK_RETRY_SEC (the stuck calls may never return, and a new one may
+      work), and none while STUCK_READER_CEILING are stuck, so the threads left behind stay few.
     * Only errors (no device, a recorder that fails to open or read) count toward
       source_max_restarts, and that count starts over once audio flows again.
     """
@@ -117,6 +119,8 @@ class SystemAudioChunkSource:
     MAX_STALL_WAIT_SEC = 60.0
     WALL_HOLD_SEC = 1.0
     MAX_STUCK_READERS = 3
+    STUCK_RETRY_SEC = 60.0
+    STUCK_READER_CEILING = 8
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
@@ -139,6 +143,7 @@ class SystemAudioChunkSource:
         self._dropped_chunks = 0
         self._silence_filled_samples = 0
         self._stuck: list[threading.Thread] = []
+        self._reader_started_at = 0.0
         self._last_error = ""
         self._device_label = ""
         self._capture_state = "starting"
@@ -195,7 +200,7 @@ class SystemAudioChunkSource:
             daemon=True,
         )
         reader.start()
-        waiting_since = time.monotonic()
+        waiting_since = self._reader_started_at = time.monotonic()
         try:
             while not self._should_stop(deadline, stop_event):
                 try:
@@ -250,6 +255,12 @@ class SystemAudioChunkSource:
         while not self._should_stop(deadline, stop_event):
             self._stuck = [thread for thread in self._stuck if thread.is_alive()]
             if len(self._stuck) < self.MAX_STUCK_READERS:
+                return
+            if (
+                len(self._stuck) < self.STUCK_READER_CEILING
+                and time.monotonic() - self._reader_started_at >= self.STUCK_RETRY_SEC
+            ):
+                self._capture_state = "reopening"
                 return
             self._capture_state = "stuck"
             time.sleep(self.POLL_SEC)

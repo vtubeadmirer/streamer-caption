@@ -9,8 +9,9 @@ it with a fake recorder that delivers audio in real time, hangs and resumes:
   audio the recorder held back during the gap and hands over at once afterwards never takes
   the clock past wall time, however many hangs there are;
 * after system_stall_restart_sec the recorder is opened again, however often it happens, without
-  ending the source (a quiet or sleeping output device is not broken), and no more than
-  MAX_STUCK_READERS recorder threads are ever left stuck in the driver;
+  ending the source (a quiet or sleeping output device is not broken); once MAX_STUCK_READERS
+  recorder threads are stuck in the driver a new recorder is tried only every STUCK_RETRY_SEC,
+  and never while STUCK_READER_CEILING are stuck;
 * real errors still count toward source_max_restarts, and that count starts over once audio flows;
 * closing the generator stops the reader, and dual mode keeps working.
 """
@@ -328,6 +329,43 @@ def check_stuck_readers_are_capped() -> None:
     assert_on_wall_time(source, elapsed, 0.25)
 
 
+def check_stuck_readers_retry_once_a_minute() -> None:
+    # The stuck calls may never return. A new recorder is still tried every STUCK_RETRY_SEC
+    # (here 0.8 s instead of a minute), and it can bring the sound back.
+    device = FakeDevice([("hang", None)], [("data", None, 0.6)])
+    install(device)
+    source = SystemAudioChunkSource(make_config(system_stall_restart_sec=0.4))
+    source.MAX_STUCK_READERS, source.STUCK_RETRY_SEC = 1, 0.8
+    try:
+        chunks, states, elapsed = consume(source, 2.0)
+    finally:
+        device.release.set()
+    assert device.opened == 2
+    assert [status for status, _ in runs(chunks)] == ["silence_fill", ""], runs(chunks)
+    first_audio = next(chunk for chunk in chunks if chunk.status == "")
+    assert first_audio.offset_sec >= 0.75, first_audio.offset_sec
+    assert "stuck" in states and states[-1] == "capturing", sorted(set(states))
+    assert_contiguous(chunks)
+    assert_on_wall_time(source, elapsed, 0.25)
+
+    # Recorders that all hang: one more each STUCK_RETRY_SEC until STUCK_READER_CEILING are stuck.
+    device = FakeDevice([("hang", None)])
+    install(device)
+    source = SystemAudioChunkSource(make_config(system_stall_restart_sec=0.3))
+    source.MAX_STUCK_READERS, source.STUCK_RETRY_SEC, source.STUCK_READER_CEILING = 1, 0.5, 3
+    try:
+        chunks, states, elapsed = consume(source, 4.0)
+        # Opens at about 0, 0.5 and 1.1 s; the third is stuck from about 2.3 s, then no more.
+        assert device.opened == 3, device.opened
+        assert source.stuck_readers == 3 and states[-1] == "stuck", sorted(set(states))
+    finally:
+        device.release.set()
+    assert {chunk.status for chunk in chunks} == {"silence_fill"}
+    assert_contiguous(chunks)
+    assert_on_wall_time(source, elapsed, 0.25)
+    assert wait_for(lambda: source.stuck_readers == 0)
+
+
 def check_errors_count_and_reset_when_audio_flows() -> None:
     # A device that cannot be opened ends the source after source_max_restarts retries.
     device = FakeDevice(RuntimeError("device gone"))
@@ -439,6 +477,7 @@ def main() -> int:
         check_long_stall_reopens_the_recorder()
         check_quiet_device_never_ends_the_source()
         check_stuck_readers_are_capped()
+        check_stuck_readers_retry_once_a_minute()
         check_errors_count_and_reset_when_audio_flows()
         check_close_stops_the_reader()
         check_dual_mode()
