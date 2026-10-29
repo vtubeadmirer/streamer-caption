@@ -66,6 +66,8 @@
     "silence_reset_sec": 2,
     "recovery_window_max_sec": 30,
     "pending_debounce_sec": 0.3,
+    "pending_min_utterance_sec": 1.2,
+    "pending_max_window_sec": 6.0,
     "pending_enabled": true,
     "pending_skip_when_busy": true,
     "pending_queue_max": 2,

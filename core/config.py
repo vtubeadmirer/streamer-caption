@@ -127,12 +127,19 @@ DEFAULTS: dict[str, Any] = {
         "engine": "baseline",
         "worker_mode": "process",
         "model": "large-v3",
+        # Gray previews: one new guess every chunk_seconds of speech at most.
         "chunk_seconds": 0.8,
+        # No longer used: a preview window now runs from the utterance start (below).
         "chunk_overlap_sec": 0.2,
         "buffer_max_sec": 30,
         "silence_reset_sec": 2,
         "recovery_window_max_sec": 30,
         "pending_debounce_sec": 0.3,
+        # A preview window runs from the start of the utterance to now. No preview until the
+        # utterance is this old (shorter windows were mostly guesses and outro phantoms) ...
+        "pending_min_utterance_sec": 1.2,
+        # ... and the window is at most this long; past that it restarts at a short pause.
+        "pending_max_window_sec": 6.0,
         "pending_enabled": True,
         "pending_skip_when_busy": True,
         "pending_queue_max": 2,
@@ -308,6 +315,8 @@ CONFIG_LIFETIME: dict[str, str] = {
     "streaming.chunk_overlap_sec": "cold",
     "streaming.buffer_max_sec": "cold",
     "streaming.pending_debounce_sec": "cold",
+    "streaming.pending_min_utterance_sec": "cold",
+    "streaming.pending_max_window_sec": "cold",
     "streaming.pending_enabled": "cold",
     "streaming.pending_skip_when_busy": "cold",
     "streaming.pending_queue_max": "cold",
@@ -600,6 +609,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("streaming.chunk_overlap_sec must be smaller than chunk_seconds")
     _bounded_number(config, "streaming", "buffer_max_sec", 5, 300)
     _bounded_number(config, "streaming", "pending_debounce_sec", 0.05, 10)
+    _bounded_number(config, "streaming", "pending_min_utterance_sec", 0, 5)
+    max_window = _bounded_number(config, "streaming", "pending_max_window_sec", 1, 30)
+    if max_window > float(config["streaming"]["buffer_max_sec"]):
+        raise ValueError("streaming.pending_max_window_sec cannot exceed streaming.buffer_max_sec")
     _bounded_number(config, "streaming", "pending_queue_max", 1, 20)
     _bounded_number(config, "streaming", "pending_min_chars", 1, 100)
     _bounded_number(config, "streaming", "pending_stale_sec", 0.25, 60)

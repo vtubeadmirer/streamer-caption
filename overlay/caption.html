@@ -63,6 +63,10 @@
     .line.pending.stable {
       color: var(--text);
     }
+    /* 기본 engine: the start of a gray preview that two guesses in a row agreed on */
+    .line.pending .agreed {
+      color: var(--text);
+    }
     .source-label {
       display: inline-block;
       margin-right: 0.35em;
@@ -120,6 +124,9 @@
     // A stable pending line (metadata.stable) only grows and is committed as-is, so it stays
     // until its confirmed line is on screen instead of disappearing first.
     let pendingStable = false;
+    // 기본 engine previews: how many leading characters (metadata.stable_chars, counted in
+    // code points like Python) two previews in a row agreed on; shown in the caption colour.
+    let pendingAgreedChars = 0;
     let pendingOffset = -1;
     let lastPendingKey = "";
     let lastPendingOffsets = { microphone: -1, system: -1 };
@@ -301,11 +308,16 @@
     }
 
     function renderPending() {
+      const chars = Array.from(pendingText);
+      const agreed = pendingStable ? 0 : Math.min(pendingAgreedChars, chars.length);
       pendingCaption.innerHTML = pendingText
         ? '<div class="line pending' + (pendingStable ? " stable" : "")
           + ' source-' + escapeHtml(pendingSource) + '">'
           + sourceLabelHtml(pendingSource, pendingSourceLabel)
-          + escapeHtml(pendingText)
+          + (agreed
+            ? '<span class="agreed">' + escapeHtml(chars.slice(0, agreed).join("")) + "</span>"
+            : "")
+          + escapeHtml(chars.slice(agreed).join(""))
           + "</div>"
         : "";
       updateVisibility();
@@ -508,9 +520,10 @@
       if (message.type === "caption_pending") {
         const source = messageSource(message);
         if (!acceptsSource(source)) return;
-        const text = String(message.text || "").trim();
+        const rawText = String(message.text || "");
+        const text = rawText.trim();
         const offset = Number(message.audio_offset_sec ?? 0);
-        const key = [source, offset.toFixed(2), text].join(":");
+        const key = [source, offset.toFixed(2), text, message.metadata?.stable_chars ?? ""].join(":");
         if (
           !text
           || key === lastPendingKey
@@ -524,6 +537,8 @@
         pendingText = text;
         pendingSource = source;
         pendingStable = Boolean(message.metadata?.stable);
+        const leading = Array.from(rawText).length - Array.from(rawText.trimStart()).length;
+        pendingAgreedChars = Math.max(0, Math.floor(Number(message.metadata?.stable_chars) || 0) - leading);
         pendingOffset = offset;
         pendingSourceLabel = String(
           message.metadata?.source_label || sourceLabels[source] || source

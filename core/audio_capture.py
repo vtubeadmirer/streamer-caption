@@ -107,6 +107,11 @@ class EnergyVadSegmenter:
         """True while a voiced segment is open (it ends after silence_duration_sec)."""
         return self._segment_start is not None
 
+    @property
+    def segment_start_sec(self) -> float | None:
+        """Start of the open segment, pre-roll included (None when no segment is open)."""
+        return self._segment_start
+
     def _push_with_voice(self, chunk: AudioChunk, is_voice: bool) -> AudioSegment | None:
         if self._segment_start is None:
             if not is_voice:

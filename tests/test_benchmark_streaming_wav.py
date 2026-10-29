@@ -38,6 +38,8 @@ def main() -> int:
     config["streaming"]["chunk_seconds"] = 0.3
     config["streaming"]["chunk_overlap_sec"] = 0.1
     config["streaming"]["pending_debounce_sec"] = 0.1
+    # The tone lasts 1 s: let previews start before the default 1.2 s into an utterance.
+    config["streaming"]["pending_min_utterance_sec"] = 0.3
 
     sample_rate = int(config["audio"]["sample_rate"])
     t = np.arange(int(sample_rate * 1.0), dtype=np.float32) / sample_rate

@@ -15,13 +15,14 @@ sys.path.insert(0, str(ROOT))
 
 from core.audio_capture import AudioChunk, calculate_rms
 from core.config import PROJECT_ROOT, load_config
+from core.preview import PreviewTracker
 from core.stt_worker import SttResult, SttWorker
 from core.streaming import PendingWindowScheduler, StreamingAction
 from core.verdicts import judge_streaming_benchmark
 from engines.baseline.engine import BaselineEngine
 from features.defense import DefenseFilter
 from features.slang import SlangDictionary
-from main import pending_events, postprocess_event
+from main import postprocess_event, preview_events
 from tools.transcribe_wav import read_wav_mono, resolve_wav_path
 
 
@@ -46,11 +47,12 @@ def output_events_for_result(
     result: SttResult,
     defense: DefenseFilter,
     slang: SlangDictionary,
+    tracker: PreviewTracker | None = None,
 ) -> list[Any]:
     output = []
     for event in result.events:
         if result.job.job_type == "pending":
-            output.extend(pending_events(event, defense, slang))
+            output.extend(preview_events(event, defense, slang, tracker, result.job.metadata))
         else:
             output.extend(postprocess_event(event, defense, slang))
     return output
@@ -65,13 +67,14 @@ def benchmark_audio(config: dict[str, Any], audio: np.ndarray, sample_rate: int,
     worker = SttWorker(engine, max_queue=int(config["streaming"].get("pending_queue_max", 2)))
     defense = DefenseFilter(config)
     slang = SlangDictionary(config)
+    tracker = PreviewTracker()
     chunks = make_chunks(audio, sample_rate, int(config["audio"]["block_size"]))
     rows: list[dict[str, Any]] = []
     started = time.perf_counter()
     worker.start()
 
     def handle_result(result: SttResult) -> None:
-        output = output_events_for_result(result, defense, slang)
+        output = output_events_for_result(result, defense, slang, tracker)
         rows.append(
             {
                 "job_id": result.job.job_id,
@@ -88,14 +91,14 @@ def benchmark_audio(config: dict[str, Any], audio: np.ndarray, sample_rate: int,
 
     for chunk in chunks:
         for action in scheduler.push(chunk):
-            result = submit_action(action, worker, config)
+            result = submit_action(action, worker, config, tracker)
             if result is not None:
                 handle_result(result)
         for result in worker.get_results():
             handle_result(result)
 
     for action in scheduler.flush():
-        result = submit_action(action, worker, config)
+        result = submit_action(action, worker, config, tracker)
         if result is not None:
             handle_result(result)
 
@@ -126,7 +129,12 @@ def benchmark_audio(config: dict[str, Any], audio: np.ndarray, sample_rate: int,
     }
 
 
-def submit_action(action: StreamingAction, worker: SttWorker, config: dict[str, Any]) -> SttResult | None:
+def submit_action(
+    action: StreamingAction,
+    worker: SttWorker,
+    config: dict[str, Any],
+    tracker: PreviewTracker | None = None,
+) -> SttResult | None:
     if action.action_type == "pending_window" and action.window is not None:
         worker.submit_latest(
             "pending",
@@ -134,6 +142,7 @@ def submit_action(action: StreamingAction, worker: SttWorker, config: dict[str, 
             action.window.sample_rate,
             action.window.start_offset_sec,
             metadata={
+                **(action.metadata or {}),
                 "window_start_offset_sec": action.window.start_offset_sec,
                 "window_end_offset_sec": action.window.end_offset_sec,
                 "window_duration_sec": action.window.duration_sec,
@@ -141,6 +150,8 @@ def submit_action(action: StreamingAction, worker: SttWorker, config: dict[str, 
         )
         return None
     elif action.action_type == "confirmed_segment" and action.segment is not None:
+        if tracker is not None:
+            tracker.confirmed(action.segment.end_offset_sec)
         job = worker.submit(
             "confirmed",
             action.segment.samples,

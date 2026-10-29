@@ -14,6 +14,7 @@ from core.config import load_config
 from core.events import CaptionEvent
 from core.log_writer import JsonlLogWriter
 from core.monitoring import MemoryMonitor
+from core.preview import PreviewTracker
 from core.session_archive import SessionArchiveRecorder
 from core.source_dedup import CrossSourceCaptionDeduplicator
 from core.recovery import ConfirmedRangeLedger
@@ -24,6 +25,7 @@ from core.text_processing import split_sentences
 from core.ws_server import CaptionWebSocketServer
 from engines.baseline.engine import BaselineEngine
 from features.defense import DefenseFilter
+from features.phantom_phrases import strip_phantom_sentences
 from features.slang import SlangDictionary
 
 
@@ -401,6 +403,7 @@ def run_v2_light(
         name: PendingWindowScheduler(source_configs[name])
         for name in source_names
     }
+    preview_trackers = {name: PreviewTracker() for name in source_names}
     caption_config = config.get("caption", {})
     source_labels = {
         "microphone": str(caption_config.get("microphone_label", "방송자")),
@@ -533,8 +536,11 @@ def run_v2_light(
             warned_stt_job_id = None
             admin_state.pipeline_warning = ""
         if result.job.job_type == "pending":
+            tracker = preview_trackers.get(str(result.job.metadata.get("audio_source", "")))
             for event in result.events:
-                for output_event in pending_events(event, defense, slang):
+                for output_event in preview_events(
+                    event, defense, slang, tracker, result.job.metadata
+                ):
                     emit_caption(
                         output_event,
                         extra={
@@ -634,11 +640,13 @@ def run_v2_light(
     if ws_server is not None:
         print(f"caption preview: overlay/caption.html  ws://{config['server']['host']}:{config['server']['port']}")
     print(
-        "device={device}, threshold={threshold}, chunk={chunk}s, overlap={overlap}s".format(
+        "device={device}, threshold={threshold}, chunk={chunk}s, "
+        "preview from {min_age}s into a sentence, window up to {max_window}s".format(
             device=config["audio"]["device"],
             threshold=config["audio"]["vad_energy_threshold"],
             chunk=config["streaming"]["chunk_seconds"],
-            overlap=config["streaming"]["chunk_overlap_sec"],
+            min_age=config["streaming"]["pending_min_utterance_sec"],
+            max_window=config["streaming"]["pending_max_window_sec"],
         )
     )
 
@@ -726,6 +734,7 @@ def run_v2_light(
                 action.window.start_offset_sec,
                 metadata={
                     **source_metadata,
+                    **(action.metadata or {}),
                     "window_start_offset_sec": action.window.start_offset_sec,
                     "window_end_offset_sec": action.window.end_offset_sec,
                     "window_duration_sec": action.window.duration_sec,
@@ -733,6 +742,8 @@ def run_v2_light(
             )
             return
         if action.action_type == "confirmed_segment" and action.segment is not None:
+            # Gray previews of this sentence's audio are stale from now on.
+            preview_trackers[action_source].confirmed(action.segment.end_offset_sec)
             processed += 1
             admin_state.segment_count = processed
             admin_state.last_segment = {
@@ -1323,6 +1334,47 @@ def postprocess_event(
         )
         for index, chunk in enumerate(chunks)
     ]
+
+
+def preview_events(
+    event: CaptionEvent,
+    defense: DefenseFilter,
+    slang: SlangDictionary,
+    tracker: PreviewTracker | None,
+    job_metadata: dict,
+) -> list[CaptionEvent]:
+    """A faster-whisper gray preview (core/preview.py): whole sentences that are only an outro
+    phrase or a subtitle credit are removed first ("오늘 날씨가. 감사합니다." shows "오늘 날씨가."),
+    a preview of audio already sent for its final caption is dropped, and metadata stable_chars
+    marks the words this preview and the previous one of the same window agree on."""
+    if event.event_type != "caption_confirmed":
+        return pending_events(event, defense, slang)
+    text = strip_phantom_sentences(event.text)
+    if not text:
+        return []
+    outputs = pending_events(replace(event, text=text), defense, slang)
+    if tracker is None:
+        return outputs
+    shown: list[CaptionEvent] = []
+    for output in outputs:
+        if output.event_type != "caption_pending":
+            shown.append(output)
+            continue
+        update = tracker.accept(output.text, job_metadata)
+        if update is None:
+            continue
+        shown.append(
+            replace(
+                output,
+                text=update.text,
+                metadata={
+                    **output.metadata,
+                    "raw_text": event.text,
+                    "stable_chars": update.stable_chars,
+                },
+            )
+        )
+    return shown
 
 
 def pending_events(
