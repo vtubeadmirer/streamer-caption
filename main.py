@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from copy import deepcopy
 from dataclasses import replace
@@ -349,6 +350,17 @@ def create_engine_route(config: dict, source_names: tuple[str, ...], log_dir) ->
     return SimulStreamingRoute(config, source, log_dir=log_dir)
 
 
+def tolerate_console_encoding() -> None:
+    """A console whose code page cannot show Korean (cp1252 and the like) must never stop captions."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def run_v2_light(
     config: dict,
     max_segments: int | None,
@@ -357,6 +369,7 @@ def run_v2_light(
     enable_admin: bool,
     show_levels: bool,
 ) -> int:
+    tolerate_console_encoding()
     config, runtime_warning = prepare_runtime_config(config)
     writer = JsonlLogWriter(config["log"]["dir"])
     admin_state = AdminState()
