@@ -33,6 +33,7 @@ CI_TESTS = [
     "tests/test_system_audio_stall.py",
     "tests/test_streaming_scheduler.py",
     "tests/test_preview_tracker.py",
+    "tests/test_desktop_overlay.py",
 ]
 
 

@@ -71,6 +71,17 @@ DEFAULTS: dict[str, Any] = {
         "microphone_label": "방송자",
         "system_label": "컴퓨터",
     },
+    # 내 화면 자막: captions drawn on the streamer's own monitor (no OBS needed).
+    "desktop_overlay": {
+        "enabled": False,
+        "font_size": 34,
+        "max_lines": 2,
+        "position": "bottom",
+        "margin_percent": 6,
+        "width_percent": 80,
+        "opacity": 1.0,
+        "background": 0.35,
+    },
     "whisper": {
         "model": "large-v3",
         "device": "cuda",
@@ -280,6 +291,14 @@ CONFIG_LIFETIME: dict[str, str] = {
     "caption.show_source_labels": "hot",
     "caption.microphone_label": "hot",
     "caption.system_label": "hot",
+    "desktop_overlay.enabled": "hot",
+    "desktop_overlay.font_size": "hot",
+    "desktop_overlay.max_lines": "hot",
+    "desktop_overlay.position": "hot",
+    "desktop_overlay.margin_percent": "hot",
+    "desktop_overlay.width_percent": "hot",
+    "desktop_overlay.opacity": "hot",
+    "desktop_overlay.background": "hot",
     "app.mode": "cold",
     "whisper.model": "cold",
     "whisper.device": "cold",
@@ -529,6 +548,16 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     _bounded_number(config, "caption", "history_retention_sec", 15, 86400)
     _bounded_number(config, "caption", "history_max_items", 12, 10000)
+    if not isinstance(config["desktop_overlay"].get("enabled"), bool):
+        raise TypeError("desktop_overlay.enabled must be boolean")
+    if config["desktop_overlay"].get("position") not in {"bottom", "top"}:
+        raise ValueError("desktop_overlay.position must be bottom or top")
+    _bounded_number(config, "desktop_overlay", "font_size", 12, 120)
+    _bounded_number(config, "desktop_overlay", "max_lines", 1, 6)
+    _bounded_number(config, "desktop_overlay", "margin_percent", 0, 45)
+    _bounded_number(config, "desktop_overlay", "width_percent", 30, 100)
+    _bounded_number(config, "desktop_overlay", "opacity", 0.2, 1)
+    _bounded_number(config, "desktop_overlay", "background", 0, 0.9)
     beam_size = _bounded_number(config, "whisper", "beam_size", 1, 20)
     if int(beam_size) != beam_size:
         raise ValueError("whisper.beam_size must be an integer")

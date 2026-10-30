@@ -12,6 +12,7 @@ from core.audio_sources import config_for_audio_source, create_audio_chunk_sourc
 from core.admin_server import AdminServer, AdminState
 from core.app_info import RELAUNCH_EXIT_CODE
 from core.config import load_config
+from core.desktop_overlay import DesktopOverlayKeeper
 from core.events import CaptionEvent
 from core.log_writer import JsonlLogWriter
 from core.monitoring import MemoryMonitor
@@ -631,9 +632,17 @@ def run_v2_light(
     if ws_server is not None:
         ws_server.start_background()
         ws_server.emit_status("caption websocket started")
+    desktop_overlay: DesktopOverlayKeeper | None = None
     if admin_server is not None:
         admin_server.start_background()
         print(f"admin page: http://{config['server']['host']}:{config['server']['admin_port']}/admin")
+        # The overlay reads its settings from the admin API, so it only runs alongside it.
+        desktop_overlay = DesktopOverlayKeeper(
+            load_config,
+            f"http://127.0.0.1:{config['server']['admin_port']}",
+            log_path=writer.session_dir / "desktop_overlay.err",
+        )
+        desktop_overlay.start()
 
     initial_memory = monitor.maybe_sample(force=True)
     if initial_memory is not None:
@@ -1149,6 +1158,8 @@ def run_v2_light(
             )
         )
 
+    if desktop_overlay is not None:
+        desktop_overlay.stop()
     graceful_end = not stopped_by_user and pipeline_exit_code == 0
     if graceful_end:
         for flush_source, flush_scheduler in schedulers.items():

@@ -161,6 +161,33 @@
         <button id="saveAudio" class="primary">오디오 저장</button>
       </section>
       <section>
+        <h2><span class="ko-text">내 화면 자막</span><span class="en-text">Desktop captions</span></h2>
+        <p class="help">
+          <span class="ko-text">OBS 없이 내 모니터 위에 자막을 띄웁니다. 항상 맨 위에 보이고, 마우스 클릭은 뒤 화면으로 그대로 넘어갑니다. 전체 화면 게임에서 가려지면 게임을 '테두리 없는 창 모드'로 바꿔 주세요.</span>
+          <span class="en-text">Shows captions on top of your own screen without OBS. Clicks pass through to the window behind. Use borderless windowed mode if a full-screen game covers it.</span>
+        </p>
+        <button id="desktopOverlayToggle" class="primary" type="button">내 화면에 자막 띄우기</button>
+        <label><span class="hint" title="내 화면 자막의 글자 크기입니다.">글자 크기</span>
+          <input id="desktopFontSize" type="number" min="12" max="120" step="1">
+        </label>
+        <label><span class="hint" title="확정 자막을 몇 줄까지 보여줄지 정합니다. 회색 미리보기 한 줄이 그 아래에 더 붙습니다.">줄 수</span>
+          <input id="desktopMaxLines" type="number" min="1" max="6" step="1">
+        </label>
+        <label>위치
+          <select id="desktopPosition"><option value="bottom">화면 아래</option><option value="top">화면 위</option></select>
+        </label>
+        <label><span class="hint" title="화면 가장자리에서 자막까지 띄울 거리입니다. 화면 높이의 몇 %인지로 정합니다.">가장자리 여백(%)</span>
+          <input id="desktopMargin" type="number" min="0" max="45" step="1">
+        </label>
+        <label><span class="hint" title="글자 뒤에 깔리는 검은 반투명 띠의 진하기입니다.">배경 진하기</span>
+          <select id="desktopBackground"><option value="0">없음 (글자 테두리만)</option><option value="0.35">연하게</option><option value="0.6">진하게</option></select>
+        </label>
+        <label><span class="hint" title="자막 전체의 불투명도입니다. 낮출수록 뒤 화면이 비쳐 보입니다.">불투명도(%)</span>
+          <input id="desktopOpacity" type="number" min="20" max="100" step="5">
+        </label>
+        <button id="saveDesktopOverlay" type="button">내 화면 자막 저장</button>
+      </section>
+      <section>
         <h2><span class="ko-text">자막</span><span class="en-text">Caption</span></h2>
         <label>스타일
           <select id="captionStyle">
@@ -1092,6 +1119,15 @@
       document.getElementById("vadEngine").value = cfg.vad.engine ?? "energy";
       document.getElementById("speechThreshold").value = cfg.vad.speech_threshold ?? 0.5;
       document.getElementById("silenceSec").value = cfg.audio.silence_duration_sec;
+      const desktop = cfg.desktop_overlay || {};
+      renderDesktopToggle(Boolean(desktop.enabled));
+      document.getElementById("desktopFontSize").value = desktop.font_size ?? 34;
+      document.getElementById("desktopMaxLines").value = desktop.max_lines ?? 2;
+      document.getElementById("desktopPosition").value = desktop.position || "bottom";
+      document.getElementById("desktopMargin").value = desktop.margin_percent ?? 6;
+      const background = Number(desktop.background ?? 0.35);
+      document.getElementById("desktopBackground").value = background <= 0.1 ? "0" : background < 0.5 ? "0.35" : "0.6";
+      document.getElementById("desktopOpacity").value = Math.round(Number(desktop.opacity ?? 1) * 100);
       document.getElementById("captionStyle").value = cfg.caption.style;
       document.getElementById("koSize").value = cfg.caption.ko_size;
       document.getElementById("maxLines").value = cfg.caption.max_lines;
@@ -1280,6 +1316,31 @@
       });
       await loadAll();
       state.textContent = "프로필 적용됨 · 방송을 다시 시작하세요";
+    });
+    function renderDesktopToggle(enabled) {
+      const button = document.getElementById("desktopOverlayToggle");
+      button.dataset.enabled = String(enabled);
+      button.textContent = enabled ? "내 화면 자막 끄기" : "내 화면에 자막 띄우기";
+    }
+    function desktopOverlayPatch() {
+      return {
+        font_size: Number(document.getElementById("desktopFontSize").value),
+        max_lines: Number(document.getElementById("desktopMaxLines").value),
+        position: document.getElementById("desktopPosition").value,
+        margin_percent: Number(document.getElementById("desktopMargin").value),
+        background: Number(document.getElementById("desktopBackground").value),
+        opacity: Number(document.getElementById("desktopOpacity").value) / 100,
+      };
+    }
+    document.getElementById("desktopOverlayToggle").addEventListener("click", async (event) => {
+      const enabled = event.currentTarget.dataset.enabled !== "true";
+      await savePatch({ desktop_overlay: { ...desktopOverlayPatch(), enabled } });
+      renderDesktopToggle(Boolean(config.desktop_overlay?.enabled));
+      state.textContent = enabled ? "내 화면 자막 켜짐 · 2초 안에 나타납니다" : "내 화면 자막 꺼짐";
+    });
+    document.getElementById("saveDesktopOverlay").addEventListener("click", async () => {
+      await savePatch({ desktop_overlay: desktopOverlayPatch() });
+      state.textContent = "내 화면 자막 설정 저장 · 1초 안에 반영";
     });
     document.getElementById("saveCaption").addEventListener("click", async () => {
       await savePatch({
