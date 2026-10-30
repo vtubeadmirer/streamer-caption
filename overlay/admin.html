@@ -97,35 +97,6 @@
         <button id="reset" class="danger"><span class="ko-text">초기화</span><span class="en-text">Reset</span></button>
       </div>
     </section>
-    <section>
-      <h2><span class="ko-text">내 화면 자막</span><span class="en-text">Desktop captions</span></h2>
-      <p class="help">
-        <span class="ko-text">OBS 없이 내 모니터 위에 자막을 띄웁니다. 항상 맨 위에 보이고, 마우스 클릭은 뒤 화면으로 그대로 넘어갑니다. 전체 화면 게임에서 가려지면 게임을 '테두리 없는 창 모드'로 바꿔 주세요.</span>
-        <span class="en-text">Shows captions on top of your own screen without OBS. Clicks pass through to the window behind. Use borderless windowed mode if a full-screen game covers it.</span>
-      </p>
-      <button id="desktopOverlayToggle" class="primary" type="button">내 화면에 자막 띄우기</button>
-      <div class="row" style="margin-top:8px">
-        <button id="desktopAdjust" type="button">위치·크기 정하기</button>
-        <button id="desktopFix" type="button" hidden>이 위치로 고정</button>
-      </div>
-      <p id="desktopPlaceState" class="help"></p>
-      <label><span class="hint" title="내 화면 자막의 글자 크기입니다.">글자 크기</span>
-        <input id="desktopFontSize" type="number" min="12" max="120" step="1">
-      </label>
-      <label><span class="hint" title="확정 자막을 몇 줄까지 보여줄지 정합니다. 회색 미리보기 한 줄이 그 아래에 더 붙습니다.">줄 수</span>
-        <input id="desktopMaxLines" type="number" min="1" max="6" step="1">
-      </label>
-      <label><span class="hint" title="정해 둔 상자 안에서 자막을 아래쪽에 붙일지 위쪽에 붙일지 정합니다.">상자 안 자막 위치</span>
-        <select id="desktopPosition"><option value="bottom">아래에 붙이기</option><option value="top">위에 붙이기</option></select>
-      </label>
-      <label><span class="hint" title="글자 뒤에 깔리는 검은 반투명 띠의 진하기입니다.">배경 진하기</span>
-        <select id="desktopBackground"><option value="0">없음 (글자 테두리만)</option><option value="0.35">연하게</option><option value="0.6">진하게</option></select>
-      </label>
-      <label><span class="hint" title="자막 전체의 불투명도입니다. 낮출수록 뒤 화면이 비쳐 보입니다.">불투명도(%)</span>
-        <input id="desktopOpacity" type="number" min="20" max="100" step="5">
-      </label>
-      <button id="saveDesktopOverlay" type="button">내 화면 자막 저장</button>
-    </section>
     <div class="grid">
       <section>
         <h2><span class="ko-text">오디오</span><span class="en-text">Audio</span></h2>
@@ -236,6 +207,35 @@
         <label><span class="hint" title="PC 재생음 자막 앞에 표시할 이름입니다."><span class="ko-text">PC 표시 이름</span><span class="en-text">PC label</span></span>
           <input id="systemLabel" type="text" maxlength="20">
         </label>        <button id="saveCaption" class="primary">자막 저장</button>
+      </section>
+      <section>
+        <h2><span class="ko-text">내 화면 자막</span><span class="en-text">Desktop captions</span></h2>
+        <p class="help">
+          <span class="ko-text">OBS 없이 내 모니터 위에 자막을 띄웁니다. 항상 맨 위에 보이고, 마우스 클릭은 뒤 화면으로 그대로 넘어갑니다. 전체 화면 게임에서 가려지면 게임을 '테두리 없는 창 모드'로 바꿔 주세요.</span>
+          <span class="en-text">Shows captions on top of your own screen without OBS. Clicks pass through to the window behind. Use borderless windowed mode if a full-screen game covers it.</span>
+        </p>
+        <button id="desktopOverlayToggle" class="primary" type="button">내 화면에 자막 띄우기</button>
+        <div class="row" style="margin-top:8px">
+          <button id="desktopAdjust" type="button">위치·크기 정하기</button>
+          <button id="desktopFix" type="button" hidden>이 위치로 고정</button>
+        </div>
+        <p id="desktopPlaceState" class="help"></p>
+        <label><span class="hint" title="내 화면 자막의 글자 크기입니다.">글자 크기</span>
+          <input id="desktopFontSize" type="number" min="12" max="120" step="1">
+        </label>
+        <label><span class="hint" title="확정 자막을 몇 줄까지 보여줄지 정합니다. 회색 미리보기 한 줄이 그 아래에 더 붙습니다.">줄 수</span>
+          <input id="desktopMaxLines" type="number" min="1" max="6" step="1">
+        </label>
+        <label><span class="hint" title="정해 둔 상자 안에서 자막을 아래쪽에 붙일지 위쪽에 붙일지 정합니다.">상자 안 자막 위치</span>
+          <select id="desktopPosition"><option value="bottom">아래에 붙이기</option><option value="top">위에 붙이기</option></select>
+        </label>
+        <label><span class="hint" title="글자 뒤에 깔리는 검은 반투명 띠의 진하기입니다.">배경 진하기</span>
+          <select id="desktopBackground"><option value="0">없음 (글자 테두리만)</option><option value="0.35">연하게</option><option value="0.6">진하게</option></select>
+        </label>
+        <label><span class="hint" title="자막 전체의 불투명도입니다. 낮출수록 뒤 화면이 비쳐 보입니다.">불투명도(%)</span>
+          <input id="desktopOpacity" type="number" min="20" max="100" step="5">
+        </label>
+        <button id="saveDesktopOverlay" type="button">내 화면 자막 저장</button>
       </section>
       <section>
         <h2><span class="ko-text">실시간 처리</span><span class="en-text">Streaming</span></h2>
@@ -662,6 +662,7 @@
       const tabs = [
         ["audio", "오디오", "Audio"],
         ["caption", "자막", "Caption"],
+        ["desktop", "내 화면 자막", "Desktop"],
         ["streaming", "실시간 처리", "Streaming"],
         ["slang", "유행어", "Slang"],
         ["analysis", "분석", "Analysis"],

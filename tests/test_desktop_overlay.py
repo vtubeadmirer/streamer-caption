@@ -161,23 +161,29 @@ def check_placement() -> None:
 
 
 def check_admin_layout() -> None:
-    """The admin tabs take main > .grid > section by position; a new section there shifts every tab."""
+    """The admin tabs take main > .grid > section by position; a new section there shifts every tab.
+
+    main is a two-column grid (status sidebar | settings), so it must hold exactly those two children.
+    """
     import re
 
     html = (ROOT / "overlay" / "admin.html").read_text(encoding="utf-8")
-    main = html[html.index("<main>"):]
+    main = html[html.index("<main>"):html.index("</main>")]
+    children = re.findall(r"\n    <(section|div)\b([^>]*)>", main)
+    assert children == [("section", ""), ("div", ' class="grid"')], children
     grid_start = main.index('    <div class="grid">\n')
-    grid_end = main.index("\n    </div>\n", grid_start)
-    grid = main[grid_start:grid_end]
-    sections = re.split(r"\n      <section[^>]*>", grid)[1:]
+    assert main.index('id="captionPreview"') < grid_start, "the caption preview sits in the status sidebar"
+    grid = main[grid_start:]
+    sections = re.split(r"<section[^>]*>", grid)[1:]
     headings = []
     for section in sections:
         h2 = re.search(r"<h2[^>]*>(.*?)</h2>", section, re.S).group(1)
         ko = re.search(r'<span class="ko-text">([^<]+)</span>', h2)
         headings.append(ko.group(1) if ko else re.sub(r"<[^>]+>", "", h2).strip())
-    assert headings[:4] == ["오디오", "자막", "실시간 처리", "유행어 / 보호 단어"], headings
-    assert "내 화면 자막" not in headings, "desktop captions sit above the tabs, always visible"
-    assert main.index("내 화면 자막") < grid_start and main.index('id="captionPreview"') < grid_start
+    assert headings[:5] == ["오디오", "자막", "내 화면 자막", "실시간 처리", "유행어 / 보호 단어"], headings
+    tabs = re.findall(r'\["(\w+)", "([^"]+)", "[^"]+"\],', html[html.index("function setupAdminTabs"):])
+    assert [ko for _name, ko in tabs[:5]] == ["오디오", "자막", "내 화면 자막", "실시간 처리", "유행어"], tabs
+    assert len(tabs) == len(sections), (len(tabs), len(sections))
 
 
 def check_renderer() -> None:
