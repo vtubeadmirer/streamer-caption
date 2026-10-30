@@ -72,6 +72,13 @@ def check_caption_rules() -> None:
     assert state.lines(6.1, settings)[-1].kind != "pending", "an unconfirmed preview goes stale"
     assert state.lines(8.0, settings) == [], "confirmed lines leave after the hold time"
 
+    chatting = OverlaySettings(max_lines=6, hold_sec=6.0, just_chatting=True)
+    history = CaptionState()
+    for index in range(8):
+        history.apply(confirmed(f"줄 {index}", 20.0 + index), float(index), chatting)
+    shown = [line.text for line in history.lines(60.0, chatting)]
+    assert shown == [f"줄 {index}" for index in range(2, 8)], "저스트 채팅: lines scroll up and never clear after a pause"
+
     stable = CaptionState()
     stable.apply(pending("정확 우선 문장", 1.0, stable=True), 0.0, settings)
     line = stable.lines(0.1, settings)[0]
@@ -87,6 +94,9 @@ def check_settings() -> None:
     config = copy.deepcopy(DEFAULTS)
     settings = OverlaySettings.from_config(config)
     assert settings.enabled is False and settings.labels is None
+    assert settings.just_chatting is bool(DEFAULTS["caption"]["just_chatting_mode"])
+    config["caption"]["just_chatting_mode"] = True
+    assert OverlaySettings.from_config(config).just_chatting
     config["audio"]["source"] = "both"
     config["desktop_overlay"].update(enabled=True, font_size=40, position="top")
     settings = OverlaySettings.from_config(config)

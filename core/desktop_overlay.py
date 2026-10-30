@@ -137,6 +137,8 @@ class OverlaySettings:
     font: str = "Malgun Gothic"
     hold_sec: float = 6.0
     stale_sec: float = 3.0
+    # 저스트 채팅 모드: lines stay and scroll up one at a time instead of clearing after hold_sec.
+    just_chatting: bool = False
     ws_port: int = 8765
     labels: dict[str, str] | None = None  # shown only when both sources are captioned
     enabled: bool = True
@@ -169,6 +171,7 @@ class OverlaySettings:
             font=str(caption.get("font") or "Malgun Gothic"),
             hold_sec=float(streaming.get("confirmed_hold_sec", 6.0)),
             stale_sec=float(streaming.get("pending_stale_sec", 3.0)),
+            just_chatting=bool(caption.get("just_chatting_mode", False)),
             ws_port=int(config.get("server", {}).get("port", 8765)),
             labels={
                 "microphone": str(caption.get("microphone_label") or "방송자"),
@@ -188,7 +191,7 @@ def _source(message: dict[str, Any]) -> str:
 
 
 class CaptionState:
-    """The same rules as overlay/caption.html, minus the just-chatting history view."""
+    """The same rules as overlay/caption.html."""
 
     def __init__(self) -> None:
         self.confirmed: list[str] = []
@@ -217,7 +220,7 @@ class CaptionState:
         # "sync" replays captions from before the overlay started; old lines would only flash.
 
     def lines(self, now: float, settings: OverlaySettings) -> list[OverlayLine]:
-        if self.confirmed and now - self.last_confirmed_at > settings.hold_sec:
+        if self.confirmed and not settings.just_chatting and now - self.last_confirmed_at > settings.hold_sec:
             self.confirmed.clear()
             if not self.pending_stable:
                 self._clear_pending()
