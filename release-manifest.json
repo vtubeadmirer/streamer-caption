@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "channel": "stable",
   "asset_name": "",
   "sha256": "",
@@ -9,7 +9,7 @@
   "minimum_launcher_version": "1.0.0",
   "mandatory": false,
   "published_at": null,
-  "release_notes": "OBS 없이 내 모니터 위에 자막을 띄우는 '내 화면 자막' 추가(관리 페이지에서 켜기, 항상 맨 위·반투명·마우스 클릭 통과). PC 소리 모드에서 \"감사합니다\"·\"다음 영상에서 만나요\" 헛자막이 나오던 문제 수정. 영어 윈도우에서 자막이 멈추던 문제 수정.",
+  "release_notes": "내 화면 자막을 원하는 위치·크기에 놓기: [위치·크기 정하기]로 나온 상자를 끌어 옮기고 가장자리로 크기를 맞춘 뒤 더블클릭하면 고정. 관리 페이지에 실시간 자막 미리보기, [새 창으로 크게 보기]·[OBS 주소 복사] 버튼 추가. 1.4.0에서 관리 페이지 탭이 한 칸씩 밀려 보이던 문제 수정('내 화면 자막'은 별도 탭으로). 저스트 채팅 모드에서 내 화면 자막이 잠시 뒤 한꺼번에 지워지던 문제 수정.",
   "runtime_asset_name": "runtime-py312-v3.zip",
   "runtime_sha256": "",
   "runtime_size": 0,
