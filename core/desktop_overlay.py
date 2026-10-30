@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -140,6 +140,16 @@ class OverlaySettings:
     ws_port: int = 8765
     labels: dict[str, str] | None = None  # shown only when both sources are captioned
     enabled: bool = True
+    # The box the streamer dragged and sized, in screen pixels; width 0 = not placed yet.
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+    adjusting: bool = False
+
+    @property
+    def rect(self) -> tuple[int, int, int, int] | None:
+        return (self.x, self.y, self.width, self.height) if self.width > 0 and self.height > 0 else None
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "OverlaySettings":
@@ -165,6 +175,11 @@ class OverlaySettings:
                 "system": str(caption.get("system_label") or "컴퓨터"),
             } if both else None,
             enabled=bool(overlay.get("enabled", False)),
+            x=int(overlay.get("x", 0)),
+            y=int(overlay.get("y", 0)),
+            width=int(overlay.get("width", 0)),
+            height=int(overlay.get("height", 0)),
+            adjusting=bool(overlay.get("adjusting", False)),
         )
 
 
@@ -340,6 +355,9 @@ def _win32() -> Any:
             wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int,
             ctypes.c_int, ctypes.c_int, wintypes.HWND, H, H, ctypes.c_void_p]),
         (user32, "DestroyWindow"): (wintypes.BOOL, [wintypes.HWND]),
+        (user32, "DefWindowProcW"): (ctypes.c_ssize_t, [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]),
+        (user32, "GetWindowRect"): (wintypes.BOOL, [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "SetWindowLongPtrW"): (ctypes.c_ssize_t, [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]),
         (user32, "ShowWindow"): (wintypes.BOOL, [wintypes.HWND, ctypes.c_int]),
         (user32, "SetWindowPos"): (wintypes.BOOL, [
             wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]),
@@ -500,50 +518,216 @@ def compose(masks: Any, outline: int, settings: OverlaySettings) -> Any:
     return out
 
 
-class OverlayWindow:
-    WS_EX = 0x00080000 | 0x00000020 | 0x00000008 | 0x00000080 | 0x08000000  # layered, click-through,
-    # topmost, tool window (no taskbar button), never takes focus
+ACCENT_BGR = (0x97, 0xC9, 0x20)  # #20c997, the admin page accent
+GUIDE_TEXT = "끌어서 옮기기 · 가장자리를 끌어 크기 조절 · 더블클릭하면 고정"
+SAMPLE_LINES = (
+    OverlayLine("자막이 이 상자 안에 표시됩니다", 16, "previous"),
+    OverlayLine("상자를 원하는 곳에 놓고 크기를 맞춰 주세요", 23, "current"),
+)
+MIN_BOX = (200, 60)
+EDGE = 10  # pixels from the border that resize instead of move
+HT = {"move": 2, "left": 10, "right": 11, "top": 12, "topleft": 13, "topright": 14,
+      "bottom": 15, "bottomleft": 16, "bottomright": 17}
 
-    def __init__(self) -> None:
+
+def hit_test(px: int, py: int, rect: tuple[int, int, int, int], edge: int = EDGE) -> int:
+    """WM_NCHITTEST answer while adjusting: borders resize, the rest drags the box."""
+    left, top, right, bottom = rect
+    vertical = "top" if py < top + edge else "bottom" if py >= bottom - edge else ""
+    horizontal = "left" if px < left + edge else "right" if px >= right - edge else ""
+    return HT[(vertical + horizontal) or "move"]
+
+
+def over(dst: Any, src: Any) -> Any:
+    """Premultiplied BGRA src drawn over dst (same shape)."""
+    import numpy as np
+
+    alpha = src[..., 3:4].astype(np.float32) / 255.0
+    return np.clip(src.astype(np.float32) + dst.astype(np.float32) * (1.0 - alpha), 0, 255).astype(np.uint8)
+
+
+def place(image: Any, width: int, height: int, top: bool = False) -> Any:
+    """Caption image centred in a width x height canvas, against its bottom (or top) edge.
+    Rows that do not fit leave from the far edge, so the newest line always shows."""
+    import numpy as np
+
+    canvas = np.zeros((height, width, 4), dtype=np.uint8)
+    if image is None:
+        return canvas
+    rows, cols = image.shape[:2]
+    if rows > height:
+        image = image[:height] if top else image[rows - height:]
+        rows = height
+    if cols > width:
+        cut = (cols - width) // 2
+        image = image[:, cut:cut + width]
+        cols = width
+    x = (width - cols) // 2
+    y = 0 if top else height - rows
+    canvas[y:y + rows, x:x + cols] = image
+    return canvas
+
+
+def adjust_frame(width: int, height: int, guide: Any) -> Any:
+    """The box shown while placing: dim fill, accent border, how-to line at the top."""
+    import numpy as np
+
+    frame = np.zeros((height, width, 4), dtype=np.uint8)
+    frame[..., 3] = 115
+    border = 3
+    for part in (frame[:border], frame[-border:], frame[:, :border], frame[:, -border:]):
+        part[..., 0], part[..., 1], part[..., 2], part[..., 3] = (*ACCENT_BGR, 255)
+    if guide is not None:
+        gh, gw = guide.shape[:2]
+        gh, gw = min(gh, height - 2 * border), min(gw, width - 2 * border)
+        if gh > 0 and gw > 0:
+            x, y = (width - gw) // 2, border + 2
+            frame[y:y + gh, x:x + gw] = over(frame[y:y + gh, x:x + gw], guide[:gh, :gw])
+    return frame
+
+
+class OverlayWindow:
+    WS_EX_PLACED = 0x00080000 | 0x00000008 | 0x00000080 | 0x08000000  # layered, topmost, tool window
+    # (no taskbar button), never takes focus
+    WS_EX_TRANSPARENT = 0x00000020  # clicks go to the window behind; off only while adjusting
+
+    def __init__(self, on_moved: Callable[[tuple[int, int, int, int]], None], on_done: Callable[[], None]) -> None:
         scale = _set_dpi_aware()
         (self.ctypes, self.wintypes, self.user32, self.gdi32, kernel32,
          _bmi, self.BLENDFUNCTION, WNDCLASSW) = _win32()
+        ctypes, wintypes = self.ctypes, self.wintypes
         self.renderer = TextRenderer(scale)
+        self.scale = scale
+        self.on_moved, self.on_done = on_moved, on_done
+        self.adjusting = False
+        self.rect: tuple[int, int, int, int] | None = None  # x, y, width, height of the placed box
+        self.visible = False
+        self._last: tuple[list[OverlayLine], OverlaySettings] | None = None
+        self.hwnd = None
+        wndproc_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        self._wndproc = wndproc_type(self._handle)  # kept alive for as long as the window
         instance = kernel32.GetModuleHandleW(None)
-        default_proc = self.ctypes.cast(self.user32.DefWindowProcW, self.ctypes.c_void_p).value
-        self._class = WNDCLASSW(lpfnWndProc=default_proc, hInstance=instance, lpszClassName="StreamerCaptionDesktop")
-        self.user32.RegisterClassW(self.ctypes.byref(self._class))
+        self._class = WNDCLASSW(
+            style=0x0008,  # CS_DBLCLKS
+            lpfnWndProc=ctypes.cast(self._wndproc, ctypes.c_void_p).value,
+            hInstance=instance,
+            lpszClassName="StreamerCaptionDesktop",
+        )
+        self.user32.RegisterClassW(ctypes.byref(self._class))
         self.hwnd = self.user32.CreateWindowExW(
-            self.WS_EX, "StreamerCaptionDesktop", "Streamer Caption", 0x80000000, 0, 0, 1, 1, None, None, instance, None
+            self.WS_EX_PLACED | self.WS_EX_TRANSPARENT, "StreamerCaptionDesktop", "Streamer Caption",
+            0x80000000, 0, 0, 1, 1, None, None, instance, None,
         )
         if not self.hwnd:
-            raise OSError(f"CreateWindowExW failed ({self.ctypes.get_last_error()})")
-        self.visible = False
+            raise OSError(f"CreateWindowExW failed ({ctypes.get_last_error()})")
+
+    # -- window messages
+
+    def _handle(self, hwnd: Any, msg: int, wparam: int, lparam: int) -> int:
+        try:
+            if self.adjusting and hwnd == self.hwnd:
+                if msg == 0x0084:  # WM_NCHITTEST
+                    px = self.ctypes.c_short(lparam & 0xFFFF).value
+                    py = self.ctypes.c_short((lparam >> 16) & 0xFFFF).value
+                    return hit_test(px, py, self._window_rect_ltrb())
+                if msg == 0x0024:  # WM_GETMINMAXINFO: ptMinTrackSize lives at offset 24
+                    info = self.ctypes.cast(lparam, self.ctypes.POINTER(self.ctypes.c_long * 10)).contents
+                    info[6], info[7] = (round(MIN_BOX[0] * self.scale), round(MIN_BOX[1] * self.scale))
+                    return 0
+                if msg == 0x0005:  # WM_SIZE: the box changed size under the mouse; redraw it now
+                    self.rect = self._window_rect()
+                    self._redraw()
+                elif msg == 0x0232:  # WM_EXITSIZEMOVE
+                    self.rect = self._window_rect()
+                    self.on_moved(self.rect)
+                elif msg == 0x00A3:  # WM_NCLBUTTONDBLCLK
+                    self.rect = self._window_rect()
+                    self.on_moved(self.rect)
+                    self.on_done()
+                    return 0
+        except Exception:  # an exception must never escape into Windows' message loop
+            pass
+        return self.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _window_rect_ltrb(self) -> tuple[int, int, int, int]:
+        rect = self.wintypes.RECT()
+        self.user32.GetWindowRect(self.hwnd, self.ctypes.byref(rect))
+        return rect.left, rect.top, rect.right, rect.bottom
+
+    def _window_rect(self) -> tuple[int, int, int, int]:
+        left, top, right, bottom = self._window_rect_ltrb()
+        return left, top, right - left, bottom - top
+
+    # -- drawing
 
     def work_area(self) -> tuple[int, int, int, int]:
         rect = self.wintypes.RECT()
         self.user32.SystemParametersInfoW(0x0030, 0, self.ctypes.byref(rect), 0)  # SPI_GETWORKAREA
         return rect.left, rect.top, rect.right, rect.bottom
 
-    def show(self, lines: list[OverlayLine], settings: OverlaySettings) -> None:
-        if not lines:
-            if self.visible:
-                self.user32.ShowWindow(self.hwnd, 0)
-                self.visible = False
-            return
+    def default_rect(self, settings: OverlaySettings) -> tuple[int, int, int, int]:
         left, top, right, bottom = self.work_area()
-        max_width = int((right - left) * settings.width_percent / 100)
-        image, width, height = self.renderer.render(lines, settings, max_width)
-        margin = int((bottom - top) * settings.margin_percent / 100)
-        x = left + (right - left - width) // 2
-        y = top + margin if settings.position == "top" else bottom - margin - height
-        self._blit(image, x, y, width, height, settings.opacity)
+        width = int((right - left) * 0.6)
+        height = round(settings.font_size * self.scale * 1.3 * (settings.max_lines + 1) + settings.font_size * self.scale)
+        return left + (right - left - width) // 2, bottom - height - int((bottom - top) * 0.06), width, height
+
+    def set_mode(self, settings: OverlaySettings) -> None:
+        # The saved box is read once; after that the box on screen is the truth, because a poll
+        # can still carry the old position while the new one is being saved.
+        if self.rect is None:
+            self.rect = settings.rect
+        if settings.adjusting and self.rect is None:
+            self.rect = self.default_rect(settings)
+        if settings.adjusting != self.adjusting:
+            self.adjusting = settings.adjusting
+            style = self.WS_EX_PLACED | (0 if self.adjusting else self.WS_EX_TRANSPARENT)
+            self.user32.SetWindowLongPtrW(self.hwnd, -20, style)  # GWL_EXSTYLE
+
+    def show(self, lines: list[OverlayLine], settings: OverlaySettings) -> None:
+        self._last = (lines, settings)
+        self.set_mode(settings)
+        self._redraw()
+
+    def _redraw(self) -> None:
+        if self._last is None:
+            return
+        lines, settings = self._last
+        if self.adjusting:
+            lines = lines or list(SAMPLE_LINES)
+        if not lines:
+            self._hide()
+            return
+        if self.rect is None:  # never placed: a strip just above the taskbar, sized to the text
+            left, top, right, bottom = self.work_area()
+            image, width, height = self.renderer.render(lines, settings, int((right - left) * settings.width_percent / 100))
+            margin = int((bottom - top) * settings.margin_percent / 100)
+            x = left + (right - left - width) // 2
+            y = top + margin if settings.position == "top" else bottom - margin - height
+        else:
+            x, y, width, height = self.rect
+            width, height = max(width, MIN_BOX[0]), max(height, MIN_BOX[1])
+            caption, _w, _h = self.renderer.render(lines, settings, width)
+            image = place(caption, width, height, top=settings.position == "top" and not self.adjusting)
+            if self.adjusting:
+                guide_settings = replace(settings, font_size=max(12.0, settings.font_size * 0.42), background=0.0)
+                guide, _gw, _gh = self.renderer.render([OverlayLine(GUIDE_TEXT, len(GUIDE_TEXT), "current")],
+                                                       guide_settings, width - 8)
+                image = over(adjust_frame(width, height, guide), image)
+        self._blit(image, x, y, width, height, 1.0 if self.adjusting else settings.opacity)
         if not self.visible:
             self.user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
             self.visible = True
 
+    def _hide(self) -> None:
+        if self.visible:
+            self.user32.ShowWindow(self.hwnd, 0)
+            self.visible = False
+
     def _blit(self, image: Any, x: int, y: int, width: int, height: int, opacity: float) -> None:
+        import numpy as np
+
         ctypes, wintypes, gdi32 = self.ctypes, self.wintypes, self.gdi32
+        image = np.ascontiguousarray(image)
         screen = self.user32.GetDC(None)
         dc = gdi32.CreateCompatibleDC(screen)
         header = self.renderer.BITMAPINFOHEADER(
@@ -590,6 +774,8 @@ def _poll_settings(admin_url: str, holder: dict[str, Any], stop: threading.Event
         try:
             with urllib.request.urlopen(f"{admin_url}/api/config", timeout=2) as response:
                 settings = OverlaySettings.from_config(json.loads(response.read().decode("utf-8")))
+            if settings.adjusting and time.monotonic() < holder.get("adjust_off_until", 0.0):
+                settings = replace(settings, adjusting=False)
             holder["settings"] = settings
             last_ok = time.monotonic()
             if not settings.enabled:
@@ -598,6 +784,23 @@ def _poll_settings(admin_url: str, holder: dict[str, Any], stop: threading.Event
             if time.monotonic() - last_ok > ADMIN_GONE_SEC:
                 stop.set()
         stop.wait(1.0)
+
+
+def _save(admin_url: str, patch: dict[str, Any]) -> None:
+    """POST a desktop_overlay patch to the admin API (no Origin header: a local tool)."""
+    def send() -> None:
+        request = urllib.request.Request(
+            f"{admin_url}/api/config",
+            data=json.dumps({"desktop_overlay": patch}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=3).close()
+        except OSError:
+            pass
+
+    threading.Thread(target=send, daemon=True).start()
 
 
 def _read_captions(holder: dict[str, Any], inbox: "queue.Queue[dict[str, Any]]", stop: threading.Event) -> None:
@@ -625,7 +828,18 @@ def run(admin_url: str) -> int:
     inbox: queue.Queue[dict[str, Any]] = queue.Queue()
     threading.Thread(target=_poll_settings, args=(admin_url, holder, stop), daemon=True).start()
     threading.Thread(target=_read_captions, args=(holder, inbox, stop), daemon=True).start()
-    window = OverlayWindow()
+
+    def moved(rect: tuple[int, int, int, int]) -> None:
+        x, y, width, height = rect
+        _save(admin_url, {"x": x, "y": y, "width": width, "height": height})
+
+    def done() -> None:
+        # Fixed at once on screen; polls that still say "adjusting" are ignored for a moment.
+        holder["adjust_off_until"] = time.monotonic() + 3.0
+        holder["settings"] = replace(holder["settings"], adjusting=False)
+        _save(admin_url, {"adjusting": False})
+
+    window = OverlayWindow(moved, done)
     state = CaptionState()
     drawn: Any = None
     last_top = 0.0
@@ -640,7 +854,7 @@ def run(admin_url: str) -> int:
                 except queue.Empty:
                     break
             lines = state.lines(now, settings)
-            signature = (tuple(lines), settings)
+            signature = (tuple(lines), replace(settings, x=0, y=0, width=0, height=0))
             if signature != drawn:
                 window.show(lines, settings)
                 drawn = signature

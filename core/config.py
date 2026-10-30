@@ -81,6 +81,13 @@ DEFAULTS: dict[str, Any] = {
         "width_percent": 80,
         "opacity": 1.0,
         "background": 0.35,
+        # The box the streamer dragged and sized on screen (pixels); width 0 = not placed yet,
+        # then position/margin_percent/width_percent place a strip above the taskbar.
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "adjusting": False,
     },
     "whisper": {
         "model": "large-v3",
@@ -301,6 +308,11 @@ CONFIG_LIFETIME: dict[str, str] = {
     "desktop_overlay.width_percent": "hot",
     "desktop_overlay.opacity": "hot",
     "desktop_overlay.background": "hot",
+    "desktop_overlay.x": "hot",
+    "desktop_overlay.y": "hot",
+    "desktop_overlay.width": "hot",
+    "desktop_overlay.height": "hot",
+    "desktop_overlay.adjusting": "hot",
     "app.mode": "cold",
     "whisper.model": "cold",
     "whisper.device": "cold",
@@ -551,8 +563,17 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     _bounded_number(config, "caption", "history_retention_sec", 15, 86400)
     _bounded_number(config, "caption", "history_max_items", 12, 10000)
-    if not isinstance(config["desktop_overlay"].get("enabled"), bool):
-        raise TypeError("desktop_overlay.enabled must be boolean")
+    for key in ("enabled", "adjusting"):
+        if not isinstance(config["desktop_overlay"].get(key), bool):
+            raise TypeError(f"desktop_overlay.{key} must be boolean")
+    for key in ("x", "y", "width", "height"):
+        value = config["desktop_overlay"].get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"desktop_overlay.{key} must be an integer")
+    _bounded_number(config, "desktop_overlay", "x", -32768, 32767)
+    _bounded_number(config, "desktop_overlay", "y", -32768, 32767)
+    _bounded_number(config, "desktop_overlay", "width", 0, 16384)
+    _bounded_number(config, "desktop_overlay", "height", 0, 16384)
     if config["desktop_overlay"].get("position") not in {"bottom", "top"}:
         raise ValueError("desktop_overlay.position must be bottom or top")
     _bounded_number(config, "desktop_overlay", "font_size", 12, 120)

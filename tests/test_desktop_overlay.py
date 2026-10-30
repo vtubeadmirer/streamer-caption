@@ -14,11 +14,16 @@ sys.path.insert(0, str(ROOT))
 
 from core.config import DEFAULTS, validate_config  # noqa: E402
 from core.desktop_overlay import (  # noqa: E402
+    HT,
     CaptionState,
     DesktopOverlayKeeper,
     OverlayLine,
     OverlaySettings,
+    adjust_frame,
     compose,
+    hit_test,
+    over,
+    place,
     wrap_spans,
 )
 
@@ -88,8 +93,14 @@ def check_settings() -> None:
     assert settings.enabled and settings.font_size == 40 and settings.position == "top"
     assert settings.labels == {"microphone": "방송자", "system": "컴퓨터"}
 
+    assert settings.rect is None, "not placed yet"
+    config["desktop_overlay"].update(x=-1600, y=900, width=900, height=160, adjusting=True)
+    settings = OverlaySettings.from_config(config)
+    assert settings.rect == (-1600, 900, 900, 160) and settings.adjusting, "a box on a left-hand monitor"
+
     validate_config(copy.deepcopy(DEFAULTS))
-    for key, value in (("position", "left"), ("enabled", "yes"), ("opacity", 0.05), ("max_lines", 9)):
+    for key, value in (("position", "left"), ("enabled", "yes"), ("opacity", 0.05), ("max_lines", 9),
+                       ("adjusting", 1), ("width", -5), ("x", 1.5), ("height", True)):
         bad = copy.deepcopy(DEFAULTS)
         bad["desktop_overlay"][key] = value
         try:
@@ -124,6 +135,49 @@ def check_compose() -> None:
     assert image[0, 39, 3] == 0, "no background box: empty pixels stay fully transparent"
     boxed = compose(masks, 2, OverlaySettings(background=0.35))
     assert boxed[0, 39, 3] == round(0.35 * 255) or abs(int(boxed[0, 39, 3]) - 89) <= 1
+
+
+def check_placement() -> None:
+    box = (100, 200, 500, 300)  # left, top, right, bottom
+    assert hit_test(300, 250, box) == HT["move"], "the middle drags the box"
+    assert hit_test(101, 250, box) == HT["left"] and hit_test(499, 250, box) == HT["right"]
+    assert hit_test(300, 201, box) == HT["top"] and hit_test(300, 299, box) == HT["bottom"]
+    assert hit_test(101, 201, box) == HT["topleft"] and hit_test(499, 299, box) == HT["bottomright"]
+
+    caption = np.full((30, 50, 4), 255, dtype=np.uint8)
+    canvas = place(caption, 200, 80)
+    assert canvas.shape == (80, 200, 4)
+    assert canvas[79, 100, 3] == 255 and canvas[0, 100, 3] == 0, "captions sit on the box's bottom edge"
+    assert canvas[60, 74, 3] == 0 and canvas[60, 75, 3] == 255, "and are centred"
+    assert place(caption, 200, 80, top=True)[0, 100, 3] == 255, "or on its top edge"
+    tall = np.zeros((120, 50, 4), dtype=np.uint8)
+    tall[-10:] = 255  # the newest row is at the bottom of the caption image
+    assert place(tall, 200, 80)[79, 100, 3] == 255, "a caption taller than the box keeps its newest rows"
+
+    frame = adjust_frame(300, 100, None)
+    assert frame[0, 150, 3] == 255 and frame[50, 150, 3] == 115, "accent border around a dim fill"
+    covered = over(frame, place(caption, 300, 100))
+    assert covered[99 - 5, 150, 3] == 255 and covered[50, 10, 3] == 115
+
+
+def check_admin_layout() -> None:
+    """The admin tabs take main > .grid > section by position; a new section there shifts every tab."""
+    import re
+
+    html = (ROOT / "overlay" / "admin.html").read_text(encoding="utf-8")
+    main = html[html.index("<main>"):]
+    grid_start = main.index('    <div class="grid">\n')
+    grid_end = main.index("\n    </div>\n", grid_start)
+    grid = main[grid_start:grid_end]
+    sections = re.split(r"\n      <section[^>]*>", grid)[1:]
+    headings = []
+    for section in sections:
+        h2 = re.search(r"<h2[^>]*>(.*?)</h2>", section, re.S).group(1)
+        ko = re.search(r'<span class="ko-text">([^<]+)</span>', h2)
+        headings.append(ko.group(1) if ko else re.sub(r"<[^>]+>", "", h2).strip())
+    assert headings[:4] == ["오디오", "자막", "실시간 처리", "유행어 / 보호 단어"], headings
+    assert "내 화면 자막" not in headings, "desktop captions sit above the tabs, always visible"
+    assert main.index("내 화면 자막") < grid_start and main.index('id="captionPreview"') < grid_start
 
 
 def check_renderer() -> None:
@@ -181,6 +235,8 @@ def main() -> int:
     check_settings()
     check_wrap()
     check_compose()
+    check_placement()
+    check_admin_layout()
     check_renderer()
     with tempfile.TemporaryDirectory() as tmp:
         check_keeper(Path(tmp))

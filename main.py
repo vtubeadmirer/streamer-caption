@@ -161,7 +161,7 @@ def run_live(
         f"{instruction} Press Ctrl+C to stop."
     )
     if ws_server is not None:
-        print(f"caption preview: overlay/caption.html  ws://{config['server']['host']}:{config['server']['port']}")
+        print(f"caption page (OBS browser source): http://{config['server']['host']}:{config['server']['admin_port']}/caption")
     print(
         "device={device}, threshold={threshold}, min={min_sec}s, silence={silence}s".format(
             device=config["audio"]["device"],
@@ -664,7 +664,7 @@ def run_v2_light(
         f"{source_instruction} Press Ctrl+C to stop."
     )
     if ws_server is not None:
-        print(f"caption preview: overlay/caption.html  ws://{config['server']['host']}:{config['server']['port']}")
+        print(f"caption page (OBS browser source): http://{config['server']['host']}:{config['server']['admin_port']}/caption")
     print(
         "device={device}, threshold={threshold}, chunk={chunk}s, "
         "preview from {min_age}s into a sentence, window up to {max_window}s".format(
