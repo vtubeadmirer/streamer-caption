@@ -16,7 +16,7 @@ def main() -> int:
     config = load_config()
     defense = DefenseFilter(config)
     spoken = {
-        "segment_voice_ratio": 0.5,
+        "segment_voice_ratio": 0.85,  # spoken lines measure 0.79-1.0 (test_hallucination_phrases)
         "no_speech_prob": 0.1,
     }
     assert not defense.apply("안", 0.9, spoken).visible

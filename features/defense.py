@@ -75,6 +75,7 @@ class DefenseFilter:
         # A whole line like "감사합니다." is hidden when less than this share of its audio was
         # speech to the app's voice detector (metadata speech_share, else segment_voice_ratio
         # unless short_speech_rescue applies).
+        self.phantom_max_voice_ratio = float(defense.get("phantom_max_voice_ratio", 0.65))
         self.phantom_max_speech_share = float(
             defense.get("phantom_max_speech_share", 0.3)
         )
@@ -166,14 +167,15 @@ class DefenseFilter:
             return DefenseResult(True, normalized, 1.0, "whitelist")
 
         if self.filter_hallucination and is_phantom_line(normalized):
-            # faster-whisper lines have no speech_share; the segment's voice ratio stands in, but
-            # not for a short line Whisper is sure of (short_speech_rescue, as for low_voice_ratio):
-            # the pre-roll and every chunk the detector missed under game sound weigh heavily in
-            # a short segment, so a donor's "감사합니다!" could be hidden.
-            share = speech_share
-            if share is None and not short_speech_rescue:
-                share = voice_ratio
-            if share is not None and share < self.phantom_max_speech_share:
+            # faster-whisper lines have no speech_share; the segment's voice ratio stands in with
+            # its own, higher bar. The pre-roll and chunks the detector missed under game sound
+            # pull a short segment's ratio down, but on a live PC-sound session spoken lines
+            # measured 0.79-1.0 while "감사합니다." phantoms came in at 0.2-0.61 with Whisper
+            # confidence 0.72-0.81, so a confident short line is not exempt.
+            share, limit = speech_share, self.phantom_max_speech_share
+            if share is None:
+                share, limit = voice_ratio, self.phantom_max_voice_ratio
+            if share is not None and share < limit:
                 return DefenseResult(
                     False,
                     normalized,

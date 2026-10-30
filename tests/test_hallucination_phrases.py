@@ -4,8 +4,8 @@
   mentions 자막, 편집 or "by" is real speech: the old filter hid every line of 30 characters or
   fewer containing 자막, which cost three real sentences per ten minutes of the lab script.
 * A whole line that is only an outro phrase ("감사합니다.", "다음 영상에서 만나요!") is hidden
-  when the app's voice detector heard little speech in that line's audio (speech_share, or the
-  segment's voice ratio for a faster-whisper line that short_speech_rescue does not cover). The
+  when the app's voice detector heard little speech in that line's audio (speech_share under 0.3,
+  or for a faster-whisper line the segment's voice ratio under 0.65, however sure Whisper is). The
   정확 우선 engine reports no Whisper confidence values, so before this its risk score was 0 and
   such lines reached the screen.
 * Any other line is never hidden on a low share alone, not even when it repeats: a short "네"
@@ -176,20 +176,28 @@ def check_phantom_lines(config: dict) -> None:
     unsure = {"no_speech_prob": 0.5, "avg_logprob": -0.3}  # confidence 0.6
     weak = baseline.apply("감사합니다.", 0.6, {**unsure, "segment_voice_ratio": 0.2, "audio_offset_sec": 50.0})
     assert not weak.visible and weak.reason == "phantom_phrase", weak
-    spoken = baseline.apply("감사합니다.", 0.9, {"segment_voice_ratio": 0.6, "no_speech_prob": 0.1, "audio_offset_sec": 80.0})
+    assert config["defense"]["phantom_max_voice_ratio"] == 0.65
+    spoken = baseline.apply("감사합니다.", 0.9, {"segment_voice_ratio": 0.8, "no_speech_prob": 0.1, "audio_offset_sec": 80.0})
     assert spoken.visible, spoken
-    # ... but not for a short line Whisper is sure of (short_speech_rescue): the pre-roll and the
-    # chunks the detector missed under game sound weigh heavily in a short segment's ratio.
-    sure = {"no_speech_prob": 0.05, "avg_logprob": -0.15}  # confidence 0.9
-    for index, text in enumerate(("감사합니다!", "감사합니다.", "고맙습니다")):
-        thanks = baseline.apply(text, 0.9, {**sure, "segment_voice_ratio": 0.2, "audio_offset_sec": 110.0 + index * 60})
-        assert thanks.visible and "short_speech_rescue" in thanks.signals, (text, thanks)
+    # ... with a higher bar than speech_share, and a confident short line is not exempt: on a live
+    # PC-sound session "감사합니다." phantoms at voice ratio 0.2-0.61 had confidence 0.72-0.81.
+    sure = {"no_speech_prob": 0.0, "avg_logprob": -0.4}  # confidence about 0.8, as measured live
+    for index, (text, ratio) in enumerate((("감사합니다.", 0.2), ("감사합니다.", 0.33), ("감사합니다.", 0.61),
+                                           ("다음 영상에서 만나요", 0.5))):
         out = app.postprocess_event(
-            CaptionEvent(event_type="caption_confirmed", text=text, confidence=0.9, audio_offset_sec=400.0 + index * 60,
-                         engine="baseline", metadata={**sure, "segment_voice_ratio": 0.2}),
+            CaptionEvent(event_type="caption_confirmed", text=text, confidence=0.8, audio_offset_sec=400.0 + index * 60,
+                         engine="baseline", metadata={**sure, "segment_voice_ratio": ratio}),
             DefenseFilter(config), slang,
         )
-        assert [event.event_type for event in out] == ["caption_confirmed"], (text, out)
+        assert [event.event_type for event in out] == ["caption_hidden"], (text, ratio, out)
+    # Lines the streamer really said measured 0.79-1.0 on the same session and stay.
+    for index, (text, ratio) in enumerate((("감사합니다.", 0.9), ("고마워요. 감사해요.", 0.92), ("감사합니다.", 1.0))):
+        out = app.postprocess_event(
+            CaptionEvent(event_type="caption_confirmed", text=text, confidence=0.8, audio_offset_sec=800.0 + index * 60,
+                         engine="baseline", metadata={**sure, "segment_voice_ratio": ratio}),
+            DefenseFilter(config), slang,
+        )
+        assert [event.event_type for event in out] == ["caption_confirmed"], (text, ratio, out)
     # A measured speech share is used whatever Whisper thinks.
     measured = baseline.apply("감사합니다.", 0.9, {**sure, "segment_voice_ratio": 0.2, "speech_share": 0.1,
                                                  "audio_offset_sec": 700.0})
