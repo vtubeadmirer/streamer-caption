@@ -93,6 +93,25 @@
       border-left: 3px solid var(--accent);
       padding: 6px 8px;
     }
+    /* ?embed=1: the small preview box on the admin page (no badge, tight margins, fewer lines) */
+    body.embed .stage {
+      padding: 10px 12px;
+    }
+    /* pre-wrap would also draw the markup's newlines around the line stack as blank rows */
+    body.embed .caption {
+      white-space: normal;
+      text-shadow:
+        -1.5px -1.5px 0 var(--shadow),
+        1.5px -1.5px 0 var(--shadow),
+        -1.5px 1.5px 0 var(--shadow),
+        1.5px 1.5px 0 var(--shadow);
+    }
+    body.embed .caption .line {
+      white-space: pre-wrap;
+    }
+    body.embed .status {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -111,6 +130,7 @@
     const params = new URLSearchParams(location.search);
     const sourceFilter = String(params.get("source") || "both").toLowerCase();
     if (params.get("preview") !== "0") document.body.classList.add("preview");
+    if (params.get("embed") === "1") document.body.classList.add("embed");
 
     let confirmedHistory = [];
     let confirmedQueue = [];

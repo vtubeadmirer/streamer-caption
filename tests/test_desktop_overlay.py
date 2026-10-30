@@ -173,6 +173,7 @@ def check_admin_layout() -> None:
     assert children == [("section", ""), ("div", ' class="grid"')], children
     grid_start = main.index('    <div class="grid">\n')
     assert main.index('id="captionPreview"') < grid_start, "the caption preview sits in the status sidebar"
+    assert 'src="/caption?embed=1' in main, "the small preview box uses the compact caption page"
     grid = main[grid_start:]
     sections = re.split(r"<section[^>]*>", grid)[1:]
     headings = []
